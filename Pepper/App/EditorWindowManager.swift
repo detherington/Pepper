@@ -14,9 +14,47 @@ final class EditorWindowManager {
         self.showError = showError
     }
 
-    /// Editors with a local or Orbis export running.
-    var exportingEditors: [EditorWindowController] {
-        windows.filter { $0.viewModel.hasActiveExport }
+    /// Send to Orbis windows opened from the main window, for recordings
+    /// not open in an editor.
+    private var orbisSends: [OrbisSendWindowController] = []
+
+    /// A local export or Orbis upload is running in these: editors' and
+    /// the main window's Send to Orbis windows'. Quit waits for them.
+    var exportingViewModels: [EditorViewModel] {
+        (windows.map(\.viewModel) + orbisSends.map(\.viewModel)).filter(\.hasActiveExport)
+    }
+
+    /// Main window › Send to Orbis…. An open editor shows its own form;
+    /// otherwise the recording loads with its saved edits behind a Send
+    /// to Orbis window, without the editor.
+    func sendToOrbis(_ url: URL) {
+        if let editor = editor(for: url) {
+            NSApp.activate(ignoringOtherApps: true)
+            editor.window?.makeKeyAndOrderFront(nil)
+            editor.viewModel.pendingMenuCommand = .sendToOrbis
+            return
+        }
+        if let existing = orbisSend(for: url) {
+            existing.show()
+            return
+        }
+        do {
+            let send = OrbisSendWindowController(project: try RecordingProject.load(bundleURL: url))
+            DockPresence.claim(send)
+            send.onClose = { [weak self, weak send] in
+                guard let self, let send else { return }
+                self.orbisSends.removeAll { $0 === send }
+                DockPresence.release(send)
+            }
+            orbisSends.append(send)
+            send.show()
+        } catch {
+            showError("Couldn't open \(url.lastPathComponent): \(error.localizedDescription)")
+        }
+    }
+
+    private func orbisSend(for url: URL) -> OrbisSendWindowController? {
+        orbisSends.first { $0.bundleURL.standardizedFileURL == url.standardizedFileURL }
     }
 
     /// An editor has this recording open.
@@ -24,14 +62,18 @@ final class EditorWindowManager {
         editor(for: url) != nil
     }
 
-    /// This recording's editor is exporting or uploading it.
+    /// This recording is being exported or uploaded, from its editor or a
+    /// Send to Orbis window.
     func isExporting(_ url: URL) -> Bool {
-        editor(for: url)?.viewModel.hasActiveExport ?? false
+        (editor(for: url)?.viewModel.hasActiveExport ?? false)
+            || (orbisSend(for: url)?.viewModel.hasActiveExport ?? false)
     }
 
-    /// Close this recording's editor, if open (its edits are saved first).
+    /// Close this recording's editor (its edits are saved first) and any
+    /// idle Send to Orbis window for it.
     func close(_ url: URL) {
         editor(for: url)?.close()
+        orbisSend(for: url)?.close()
     }
 
     private func editor(for url: URL) -> EditorWindowController? {

@@ -13,8 +13,9 @@ compositing, Sparkle for auto-update.
 
 Distribution: same model as Muesli. Orbis serves releases from
 `https://sbsorbis.com/download/pepper/` (Sparkle appcast + update zips +
-DMGs); its Pepper download page links the newest DMG. The repo is still
-named `Mentor` (the app's working name before 2.0). Shows in the Dock with
+DMGs); its Pepper download page links the newest DMG. The repo is
+`detherington/Pepper`, at `~/Pepper` (it was `Mentor`, the app's working
+name before 2.0, until 2026-10-06). Shows in the Dock with
 a main window (`UI/Home/`: record, recent recordings, devices, Orbis) that
 opens at launch and on a Dock click. Settings › "Hide Pepper from the Dock"
 makes it menu-bar only (no window at launch; `.regular` only while one of
@@ -25,7 +26,7 @@ Requires macOS 26 (everyone at SBS is on 26 or later); Sparkle only
 offers updates to Macs that meet the minimum.
 
 Single-maintainer project; ship cadence is "whenever a feature's ready."
-Version is `MARKETING_VERSION` in `project.yml` — currently 1.3.0. The
+Version is `MARKETING_VERSION` in `project.yml` — currently 1.3.1. The
 build number (`CURRENT_PROJECT_VERSION`) is a UTC `YYYYMMDDHHMM`
 timestamp set by the release script.
 
@@ -50,12 +51,17 @@ only happens during `scripts/release.sh`.
 | Debug build | `xcodebuild -project Pepper.xcodeproj -scheme Pepper -configuration Debug -destination 'platform=macOS' build` |
 | Launch dev build | `pkill -x Pepper; open <DerivedData>/Build/Products/Debug/Pepper.app` |
 | Regenerate xcodeproj | `xcodegen generate` (Homebrew, or `.local/bin/` via `scripts/bootstrap.sh`) |
+| Unit tests | `xcodebuild test -project Pepper.xcodeproj -scheme Pepper -destination 'platform=macOS'` |
 | Pre-release checks only | `scripts/release.sh --check` |
 | Ship a release | `scripts/release.sh`, then `scripts/publish.sh X.Y.Z` (see "Release workflow") |
 
-There are no unit tests in this repo — validation is manual ("smoke-test a
-recording, confirm the .mp4 renders and the editor opens it"). Don't
-invent test infrastructure unless asked.
+`PepperTests` (Swift Testing, hosted in Pepper.app, which skips its own
+startup when XCTest launches it) covers the pure logic: trim rounding,
+pause cutting around clicks, `FriendlyError` wording, recording names and
+renames. Add a test with any change there; `scripts/release.sh` runs them
+before building. Capture, compositing and UI are still checked by hand
+and with the review hooks below ("smoke-test a recording, confirm the
+export renders and the editor opens it").
 
 ### Debug builds drop frames
 
@@ -138,7 +144,10 @@ so their JSON logs stay aligned with retimed video.
 
 `Pepper/Editor/LiveCompositor.swift` is an `AVVideoCompositing`
 implementation that drives **both** the live editor preview and the
-`FinalRenderer` export pass. Each composition owns its own
+`FinalRenderer` export pass. Video compositions are immutable, built from
+`AVVideoComposition.Configuration` (macOS 26; `AVMutableVideoComposition`
+is deprecated); edits flow through the compositor's `State`, never by
+changing a composition. Each composition owns its own
 `LiveCompositor.State` (there is no shared singleton any more) holding
 all overlay parameters (webcam layout, zoom keyframes, talking-head
 keyframes, title cards, cursor ripples, audio range). The editor writes
@@ -173,7 +182,7 @@ the same time base the editor uses for seeking. Don't mix wall-clock
 | `Pepper/Soundboard/` | Soundboard engine + cues + hotkey binding |
 | `Pepper/Editor/` | `RecordingProject`, `EditorComposition`, `LiveCompositor`, `OverlaySettings` (the one value both preview and export render from), `EditorViewModel` (state and setup; behaviour by area in `EditorViewModel+Playback/+Trim/+Captions/+Keyframes/+Audio/+Export`, so some state has internal setters for those files), `EditState` + `SidecarStore` (per-recording edits, debounced saves), keyframe models + `RampKeyframe` (shared zoom/talking-head editing rules), `SilenceAnalyzer`, `SourceCoordinateMapper`, `TrimMap`; `EditorView` (window toolbar: details, Send to Orbis, Export) with `Inspector/` (`EditorInspector`: plain-language feature rows with switches, one open at a time via `vm.openInspectorFeature`, plus Quick polish; timeline/preview clicks open the matching row), `Timeline/`, `ExportSheet` (+ the save panel's Quality accessory) |
 | `Pepper/Rendering/` | `FinalRenderer` (reader → compositor → writer), `ExportQuality`, `SRTFormatter` |
-| `Pepper/Orbis/` | "Export to Orbis": `OrbisAccount` (connection owner — OAuth 2.1 PKCE + loopback sign-in as client `pepper-mac`, scope `videos`, same flow as Muesli; refresh/revoke), `OAuthLoopbackServer`, `OrbisClient` (REST; asks `OrbisAccount` for a credential per request), `OrbisExportController` (FinalRenderer → presigned R2 PUT → ingest-assets), `OrbisExportSheet`, `OrbisKeychain` (refresh token keyed per host, never UserDefaults), `OrbisSettings` (host + last-used form values). No custom URL scheme — an old token-delivery link was a token-injection hole |
+| `Pepper/Orbis/` | "Export to Orbis": `OrbisAccount` (connection owner — OAuth 2.1 PKCE + loopback sign-in as client `pepper-mac`, scope `videos`, same flow as Muesli; refresh/revoke), `OAuthLoopbackServer`, `OrbisClient` (REST; asks `OrbisAccount` for a credential per request), `OrbisExportController` (FinalRenderer → presigned R2 PUT → ingest-assets), `OrbisExportSheet`, `OrbisSendWindowController` (Send to Orbis from the main window's right-click menu: loads the recording headless with its saved edits and shows the same form in its own window; its uploads count for quit), `OrbisKeychain` (refresh token keyed per host, never UserDefaults), `OrbisSettings` (host + last-used form values). No custom URL scheme — an old token-delivery link was a token-injection hole |
 | `Pepper/UI/` | `Home/` (main window: `HomeWindowController` — hides while a recording starts, back if it's cancelled — `HomeModel`, `HomeView`, in the setup/sign-in page look; Teleprompter and Soundboard buttons; a recent recording's right-click menu opens, reveals, renames or trashes it, never while it's rendering or exporting); `FriendlyError` (+ `FriendlyErrorView`); SwiftUI/AppKit windows (Settings, Soundboard, SourcePicker, RegionSelector, Countdown, RecordingBorder, WebcamPreview, Teleprompter, VideoReadyNotice — Pepper's own card, not a system notification, so no permission prompt); `Onboarding/` (setup walkthrough, modelled on Muesli's); `Brand` (SBS tokens shared with Muesli: colorsets, cobalt `AccentColor` app-wide, Nantes font in `Resources/Fonts`, Neon/Quiet button styles, `brandCard`/`brandKicker`/`brandTimecode`). The editor follows Muesli's rules: native toolbar/forms/menus/sheets; ground strips (timeline, inspector) carrying surface cards; one Neon CTA (Quick polish); Persimmon = live/playhead, Violet = automatic (zooms), Emerald = you (full-screen moments), Teal = caption blocks. Recording indicators (the border, the menu-bar record icon) stay system red on purpose: red is universally "recording" |
 | `Pepper/Hotkeys/` | `GlobalHotkey` — Carbon `RegisterEventHotKey` wrapper |
 | `Pepper/Settings/` | `Settings` — UserDefaults-backed singleton, posts `Settings.didChange` notification |
@@ -227,6 +236,10 @@ the same time base the editor uses for seeking. Don't mix wall-clock
   `-pepper.debug.renderExportTrimInNs <ns>`, `-pepper.debug.renderExportCutNs
   <start,end>`, `-pepper.debug.renderExportTrimIn <s>` and
   `-pepper.debug.renderExportCleanAudio YES` set up the edit first.
+  `-pepper.debug.renderOrbisSend <dir> -pepper.debug.renderOrbisSendBundle
+  <recording.pepper>` writes the main window's Send to Orbis window once
+  loaded (nothing is sent). The editor hooks live in
+  `EditorWindowController+Debug.swift`.
 
 **Keep signing identity stable across builds** — ad-hoc signing
 reshuffles the CDHash every compile and re-prompts for every TCC grant.
@@ -278,6 +291,7 @@ Same model as Muesli (`~/Muesli/scripts/release.sh`, docs/DEPLOYMENT.md §7).
 2. `scripts/release.sh` on `main`:
    - checks: clean tree, tag `vX.Y.Z` unused, version not already in
      `dist/appcast.xml`, SUFeedURL is the Orbis feed, `main` up to date;
+   - runs `PepperTests` (log in `build/test.log`), stopping on a failure;
    - clean Release build with `CURRENT_PROJECT_VERSION` = UTC timestamp;
      inside-out signing (Sparkle helpers keep their own entitlements);
    - notarize + staple the app (profile `Picsy`, or

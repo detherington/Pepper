@@ -66,6 +66,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // old `MainActor.assumeIsolated` wrapper is gone.
     static func main() {
         let app = NSApplication.shared
+        // Hosting the unit tests: no menu bar item, setup, camera,
+        // shortcuts or single-instance check, just a running app for
+        // XCTest to load PepperTests into.
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+            app.run()
+            return
+        }
         let delegate = AppDelegate()
         app.delegate = delegate
         // LSUIElement stays on so a hidden Dock icon never flashes at
@@ -84,6 +91,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if EditorWindowController.renderIfRequested() { exit(0) }
         if VideoReadyNotice.renderIfRequested() { exit(0) }
         if HomeWindowController.renderIfRequested() { exit(0) }
+        if OrbisSendWindowController.renderIfRequested() { exit(0) }
         #endif
         // Drain any queued Apple Events (specifically `kAEOpenDocuments`)
         // before the duplicate-instance check. When Finder double-clicks a
@@ -139,6 +147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             showSoundboard: { [weak self] in self?.soundboardWindow.show() },
             reveal: { [weak self] in self?.revealRecording($0) },
             rename: { [weak self] in self?.renameRecording($0) },
+            sendToOrbis: { [weak self] in self?.editors.sendToOrbis($0) },
             trash: { [weak self] in self?.trashRecording($0) }
         ))
 
@@ -255,7 +264,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // A duplicate instance quits before wiring anything up — there's
         // nothing to protect.
         guard let recording else { return .terminateNow }
-        let exportingEditors = editors.exportingEditors
+        let exporting = editors.exportingViewModels
 
         switch recording.state {
         case .picking, .countingDown:
@@ -286,8 +295,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor in
                 await stop.value
                 for render in earlierRenders { await render.value }
-                for editor in exportingEditors {
-                    await editor.viewModel.cancelActiveExportsAndWait()
+                for viewModel in exporting {
+                    await viewModel.cancelActiveExportsAndWait()
                 }
                 NSApp.reply(toApplicationShouldTerminate: true)
             }
@@ -295,7 +304,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let pending = recording.pendingFinalizeTasks
-        guard !pending.isEmpty || !exportingEditors.isEmpty else { return .terminateNow }
+        guard !pending.isEmpty || !exporting.isEmpty else { return .terminateNow }
         guard confirmQuit(
             message: "Pepper is still rendering.",
             info: "Quitting now cancels the render. Your .pepper recording is already saved and can be exported from the editor.",
@@ -304,8 +313,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pending.forEach { $0.cancel() }
         Task { @MainActor in
             for render in pending { await render.value }
-            for editor in exportingEditors {
-                await editor.viewModel.cancelActiveExportsAndWait()
+            for viewModel in exporting {
+                await viewModel.cancelActiveExportsAndWait()
             }
             NSApp.reply(toApplicationShouldTerminate: true)
         }

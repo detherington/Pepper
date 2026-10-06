@@ -310,7 +310,7 @@ enum FinalRenderer {
 
     private static func writeComposition(
         composition: AVMutableComposition,
-        videoComposition: AVMutableVideoComposition,
+        videoComposition: AVVideoComposition,
         duration: CMTime,
         outputSize: CGSize,
         trimMap: TrimMap? = nil,

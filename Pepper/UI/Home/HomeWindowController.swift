@@ -25,6 +25,7 @@ final class HomeWindowController: NSObject, NSWindowDelegate {
         /// A recent recording's right-click menu.
         var reveal: (URL) -> Void
         var rename: (URL) -> Void
+        var sendToOrbis: (URL) -> Void
         var trash: (URL) -> Void
     }
 
@@ -123,7 +124,7 @@ extension HomeWindowController {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let noop = Actions(record: {}, open: { _ in }, showOpenPanel: {}, showSettings: {}, revealRecordings: {},
                            toggleTeleprompter: {}, showSoundboard: {},
-                           reveal: { _ in }, rename: { _ in }, trash: { _ in })
+                           reveal: { _ in }, rename: { _ in }, sendToOrbis: { _ in }, trash: { _ in })
         let controller = HomeWindowController(actions: noop)
         controller.show()
         // Thumbnails load in the background.

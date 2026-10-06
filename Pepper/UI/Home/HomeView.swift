@@ -167,6 +167,8 @@ struct HomeView: View {
                             open: { actions.open(recent.url) },
                             reveal: { actions.reveal(recent.url) },
                             rename: { actions.rename(recent.url) },
+                            sendToOrbis: { actions.sendToOrbis(recent.url) },
+                            canSendToOrbis: account.isConnected,
                             trash: { actions.trash(recent.url) }
                         )
                     }
@@ -229,6 +231,9 @@ private struct RecentTile: View {
     let open: () -> Void
     let reveal: () -> Void
     let rename: () -> Void
+    let sendToOrbis: () -> Void
+    /// Signed in to Orbis (the editor's toolbar hides Send to Orbis otherwise).
+    let canSendToOrbis: Bool
     let trash: () -> Void
     @State private var isHovering = false
 
@@ -284,6 +289,8 @@ private struct RecentTile: View {
             Button("Open in Editor", action: open)
             Button("Show in Finder", action: reveal)
             Button("Rename…", action: rename)
+            Button("Send to Orbis…", action: sendToOrbis)
+                .disabled(!canSendToOrbis)
             Divider()
             Button("Move to Trash…", role: .destructive, action: trash)
         }

@@ -8,7 +8,11 @@ import CoreMedia
 enum EditorComposition {
     struct Result {
         let composition: AVMutableComposition
-        let videoComposition: AVMutableVideoComposition
+        /// Immutable: built once from an `AVVideoComposition.Configuration`
+        /// (macOS 26's replacement for `AVMutableVideoComposition`), as
+        /// nothing changes a composition after it's made; the compositor's
+        /// `State` carries the edits.
+        let videoComposition: AVVideoComposition
         let duration: CMTime
         let screenTrackID: CMPersistentTrackID
         let webcamTrackID: CMPersistentTrackID
@@ -162,11 +166,6 @@ enum EditorComposition {
             width: metadata.compositedPixelSize.width,
             height: metadata.compositedPixelSize.height
         )
-        let videoComposition = AVMutableVideoComposition()
-        videoComposition.renderSize = outputSize
-        videoComposition.frameDuration = CMTime(value: 1, timescale: 60)
-        videoComposition.customVideoCompositorClass = LiveCompositor.self
-
         let compositorState = LiveCompositor.defaultState()
         let instruction = LiveCompositor.Instruction(
             timeRange: timeRange,
@@ -174,7 +173,12 @@ enum EditorComposition {
             webcamTrackID: webcamTrackID,
             state: compositorState
         )
-        videoComposition.instructions = [instruction]
+        let videoComposition = AVVideoComposition(configuration: .init(
+            customVideoCompositorClass: LiveCompositor.self,
+            frameDuration: CMTime(value: 1, timescale: 60),
+            instructions: [instruction],
+            renderSize: outputSize
+        ))
 
         PepperDebug.log("COMPOSE: built — renderSize=\(outputSize), screenID=\(screenCompTrack.trackID), webcamID=\(webcamTrackID), duration=\(CMTimeGetSeconds(sDuration))s")
 
@@ -268,23 +272,23 @@ enum EditorComposition {
 
         // New video composition that spans the stitched duration.
         let stitchedDuration = trimMap.outputDuration
-        let renderSize = source.videoComposition.renderSize
-        let newVideoComp = AVMutableVideoComposition()
-        newVideoComp.renderSize = renderSize
-        newVideoComp.frameDuration = source.videoComposition.frameDuration
-        newVideoComp.customVideoCompositorClass = LiveCompositor.self
-        newVideoComp.instructions = [
-            LiveCompositor.Instruction(
-                timeRange: CMTimeRange(start: .zero, duration: stitchedDuration),
-                screenTrackID: screenID,
-                webcamTrackID: webcamID,
-                // Stitched comp is rendered by the same caller that
-                // owns `source`, so they share the same State instance.
-                // The single writer (editor export or renderer) is
-                // logically one session.
-                state: source.compositorState
-            )
-        ]
+        let newVideoComp = AVVideoComposition(configuration: .init(
+            customVideoCompositorClass: LiveCompositor.self,
+            frameDuration: source.videoComposition.frameDuration,
+            instructions: [
+                LiveCompositor.Instruction(
+                    timeRange: CMTimeRange(start: .zero, duration: stitchedDuration),
+                    screenTrackID: screenID,
+                    webcamTrackID: webcamID,
+                    // Stitched comp is rendered by the same caller that
+                    // owns `source`, so they share the same State instance.
+                    // The single writer (editor export or renderer) is
+                    // logically one session.
+                    state: source.compositorState
+                )
+            ],
+            renderSize: source.videoComposition.renderSize
+        ))
 
         PepperDebug.log("COMPOSE: stitched — \(trimMap.keptRanges.count) segments, duration=\(CMTimeGetSeconds(stitchedDuration))s")
 

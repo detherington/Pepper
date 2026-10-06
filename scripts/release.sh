@@ -189,6 +189,18 @@ fi
 echo "Checks passed."
 if [ "$MODE" = "check" ]; then exit 0; fi
 
+# ---- Tests ----
+# PepperTests (trim rounding, pause cutting, error wording, recording
+# names) before anything is built or signed.
+echo "=== Running unit tests ==="
+mkdir -p build
+if ! xcodebuild test -project Pepper.xcodeproj -scheme Pepper -destination 'platform=macOS' \
+        -derivedDataPath build/test > build/test.log 2>&1; then
+    grep -E "✘|error:" build/test.log | head -20 >&2 || true
+    fail "unit tests failed (full log: build/test.log)."
+fi
+grep -E "Test run with" build/test.log | tail -1 || true
+
 # ---- Build ----
 # Sparkle orders updates by CFBundleVersion and the Orbis page compares it
 # as text, so it's a fixed-width UTC timestamp, fresh for every release.
