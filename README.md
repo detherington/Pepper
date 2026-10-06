@@ -1,6 +1,6 @@
 # Pepper
 
-A Loom-style screen + webcam recording app for macOS, built to support guided software walkthroughs with smart zoom, webcam transitions, titles, and a presenter soundboard.
+A Loom-style screen + webcam recording app for macOS 26 and later, built to support guided software walkthroughs with smart zoom, webcam transitions, titles, and a presenter soundboard.
 
 ## What it does
 

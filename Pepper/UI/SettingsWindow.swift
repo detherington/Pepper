@@ -42,6 +42,7 @@ private struct SettingsView: View {
     @State private var countdownGo      = Settings.shared.countdownShowGo
     @State private var hideMenuBar     = Settings.shared.hideMenuBarIconWhenRecording
     @State private var hideDockIcon    = Settings.shared.hideDockIcon
+    @State private var saveVideoAfterRecording = Settings.shared.saveVideoAfterRecording
     @State private var cameraDeviceID: String = Settings.shared.cameraDeviceID ?? ""
     @State private var micDeviceID: String    = Settings.shared.microphoneDeviceID ?? ""
     @State private var availableCameras: [AVCaptureDevice] = []
@@ -132,7 +133,9 @@ private struct SettingsView: View {
                         .onChange(of: countdownGo) { _, v in Settings.shared.countdownShowGo = v }
                 }
 
-                Text("Each recording writes a `.pepper` sidecar (raw screen + webcam + audio + event log) used by the editor. The composited MP4 is rendered in the background after you stop recording so live capture runs smoothly at full frame rate.")
+                Toggle("Also save a video file after each recording", isOn: $saveVideoAfterRecording)
+                    .onChange(of: saveVideoAfterRecording) { _, v in Settings.shared.saveVideoAfterRecording = v }
+                Text("Pepper opens the editor when you stop, and you Export or Send to Orbis from there. Turn this on to also get an MP4 of each recording as it was recorded, in Movies › Pepper. It takes more space and a few minutes to make.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

@@ -411,8 +411,8 @@ fi
 
 echo ""
 echo "=== ${APP_NAME} ${VERSION} (${BUILD}) is built, notarized and stapled ==="
-echo "Upload everything in $(pwd)/${UPLOAD}/ to the Orbis Replit project's"
-echo "client/public/download/pepper/, then redeploy Orbis:"
+echo "Ready to publish ${UPLOAD}/:"
 ls -1 "$UPLOAD" | sed 's/^/  /'
-echo "Replace appcast.xml; keep the file names exactly (the appcast and the"
-echo "download page reference them). Then run: scripts/release.sh --verify"
+echo "Publish to Orbis (uploads the archives first and the appcast last, then"
+echo "checks the live feed and every file byte for byte):"
+echo "  scripts/publish.sh ${VERSION}"

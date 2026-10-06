@@ -8,9 +8,7 @@ struct CaptionsFeature: View {
     private static let sizes: [(String, Double)] = [("Small", 0.035), ("Medium", 0.045), ("Large", 0.06)]
     private static let heights: [(String, Double)] = [("Bottom", 0.06), ("Raised", 0.16)]
 
-    /// Switching on with no captions yet writes them, unless macOS would
-    /// ask for Speech Recognition first: then it opens the row, whose
-    /// button says so before asking.
+    /// Switching on with no captions yet writes them.
     static func isOn(_ vm: EditorViewModel) -> Binding<Bool> {
         Binding(
             get: { vm.isTranscribing || (vm.transcription != nil && vm.captionStyle.enabled) },
@@ -18,12 +16,7 @@ struct CaptionsFeature: View {
                 var s = vm.captionStyle
                 s.enabled = on
                 vm.captionStyle = s
-                guard on, vm.transcription == nil else { return }
-                if CaptionTranscriber.willAskForPermission {
-                    vm.openInspectorFeature = .captions
-                } else {
-                    vm.generateCaptions()
-                }
+                if on, vm.transcription == nil { vm.generateCaptions() }
             }
         )
     }
@@ -85,11 +78,8 @@ struct CaptionsFeature: View {
             }
         } else {
             Note("Pepper writes captions from your narration, right on this Mac. You can fix any line afterwards.")
-            if CaptionTranscriber.willAskForPermission {
-                Note("The first time, macOS asks to let Pepper use Speech Recognition.")
-            }
             Button {
-                vm.generateCaptions(mayAskForPermission: true)
+                vm.generateCaptions()
             } label: {
                 Text("Write captions").frame(maxWidth: .infinity)
             }
@@ -100,27 +90,6 @@ struct CaptionsFeature: View {
                 .font(.system(size: 11.5))
                 .foregroundStyle(.orange)
                 .fixedSize(horizontal: false, vertical: true)
-            if vm.transcriptionErrorIsPermissionDenied {
-                Button("Open Speech Recognition Settings") { SystemSettingsPane.speechRecognition.open() }
-                    .controlSize(.small)
-            }
-            // The legacy on-device recognizer (macOS 14/15) sometimes
-            // hears nothing even when Dictation works; offer Apple's
-            // servers for this one request. The modern one has no such
-            // failure, so on newer Macs "no speech" means no speech.
-            if vm.transcriptionErrorIsNoSpeech, !CaptionTranscriber.usesModernPath {
-                Button {
-                    vm.generateCaptions(allowCloudFallback: true)
-                } label: {
-                    Label("Try again with Apple's servers", systemImage: "icloud.and.arrow.up")
-                        .frame(maxWidth: .infinity)
-                }
-                .controlSize(.small)
-                .disabled(vm.isTranscribing)
-                Note(CaptionTranscriber.willAskForPermission
-                     ? "Sends this recording's audio to Apple for this one request. macOS asks to let Pepper use Speech Recognition first."
-                     : "Sends this recording's audio to Apple for this one request.")
-            }
         }
     }
 }

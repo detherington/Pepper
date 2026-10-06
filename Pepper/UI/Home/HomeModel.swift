@@ -22,6 +22,7 @@ final class HomeModel {
     private(set) var cameraLabel = ""
     private(set) var microphoneLabel = ""
     private(set) var recordShortcut: String?
+    private(set) var teleprompterShown = false
     /// Screen Recording, camera or microphone still to allow.
     private(set) var needsSetup = false
 
@@ -38,6 +39,7 @@ final class HomeModel {
         }
 
         recordShortcut = Settings.shared.shortcut(for: .recordToggle)?.displayString
+        teleprompterShown = Settings.shared.teleprompterVisible
 
         let permissions = Permissions.shared
         permissions.refresh()

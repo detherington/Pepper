@@ -21,8 +21,11 @@ makes it menu-bar only (no window at launch; `.regular` only while one of
 its windows is open, via `DockPresence`). `LSUIElement` stays true so a
 hidden Dock icon never flashes at launch; the policy is set at startup.
 
+Requires macOS 26 (everyone at SBS is on 26 or later); Sparkle only
+offers updates to Macs that meet the minimum.
+
 Single-maintainer project; ship cadence is "whenever a feature's ready."
-Version is `MARKETING_VERSION` in `project.yml` — currently 1.2.3. The
+Version is `MARKETING_VERSION` in `project.yml` — currently 1.3.0. The
 build number (`CURRENT_PROJECT_VERSION`) is a UTC `YYYYMMDDHHMM`
 timestamp set by the release script.
 
@@ -48,7 +51,7 @@ only happens during `scripts/release.sh`.
 | Launch dev build | `pkill -x Pepper; open <DerivedData>/Build/Products/Debug/Pepper.app` |
 | Regenerate xcodeproj | `xcodegen generate` (Homebrew, or `.local/bin/` via `scripts/bootstrap.sh`) |
 | Pre-release checks only | `scripts/release.sh --check` |
-| Ship a release | `scripts/release.sh`, upload, `scripts/release.sh --verify` (see "Release workflow") |
+| Ship a release | `scripts/release.sh`, then `scripts/publish.sh X.Y.Z` (see "Release workflow") |
 
 There are no unit tests in this repo — validation is manual ("smoke-test a
 recording, confirm the .mp4 renders and the editor opens it"). Don't
@@ -68,15 +71,19 @@ the DMG) record cleanly.
 ### Recording pipeline — post-capture render (Option A)
 
 Live capture writes **only** the `.pepper` sidecar bundle (raw tracks +
-JSON event logs). The composited MP4 is rendered post-capture by
-`FinalRenderer` using `AVAssetReader` + `AVAssetWriter` + `LiveCompositor`.
+JSON event logs). Composited MP4s are rendered by `FinalRenderer` using
+`AVAssetReader` + `AVAssetWriter` + `LiveCompositor`: from the editor
+(Export, Send to Orbis), and right after a recording only when Settings ›
+Recording › "Also save a video file after each recording" is on (off by
+default: those files were most of the recordings folder's size).
 Rationale: three concurrent HW encoders (screen, webcam, composited) causes
 visible jitter on M4-base; one live encoder per raw track is fine.
 
 ```
 ~/Movies/Pepper/
-├── Pepper_<timestamp>.mp4            composited final (shareable)
+├── Pepper_<timestamp>.mp4            as-recorded video (only with that setting on)
 └── Pepper_<timestamp>.pepper/        sidecar bundle (editable)
+    (Rename… in the main window renames both; nothing inside refers to the name)
     ├── screen.mov                    H.264 High, 60fps, frame-reordering off
     ├── webcam.mov                    H.264, 30fps
     ├── mic.m4a                       AAC
@@ -160,14 +167,14 @@ the same time base the editor uses for seeking. Don't mix wall-clock
 
 | Folder | Responsibility |
 | --- | --- |
-| `Pepper/App/` | `AppDelegate` (entry point + wiring, shortcuts, quit), `Permissions` (read-only status + button-driven requests for Screen Recording, Camera, Mic, Accessibility), `DockPresence` (claims that keep the app `.regular`), `AppRelauncher`, `RecordingFlowController` (picker → countdown → record → stop state machine; on stop opens the editor, then renders the as-recorded MP4 and shows `VideoReadyNotice` if that editor was closed), `EditorWindowManager` (editor windows + activation-policy flipping), `CaptureDeviceMonitor` (camera/mic permissions, hot-plug), `OpenURLRouter` (open-file Apple Events, duplicate-instance hand-off), `MainMenu`, `MenuBarController`, `PepperDebug` log |
+| `Pepper/App/` | `AppDelegate` (entry point + wiring, shortcuts, quit), `Permissions` (read-only status + button-driven requests for Screen Recording, Camera, Mic, Accessibility), `DockPresence` (claims that keep the app `.regular`), `AppRelauncher`, `RecordingFlowController` (picker → countdown → record → stop state machine; on stop opens the editor, then, if Settings asks for it, renders the as-recorded MP4 and shows `VideoReadyNotice` if that editor was closed), `EditorWindowManager` (editor windows + activation-policy flipping), `CaptureDeviceMonitor` (camera/mic permissions, hot-plug), `OpenURLRouter` (open-file Apple Events, duplicate-instance hand-off), `MainMenu`, `MenuBarController`, `PepperDebug` log |
 | `Pepper/Capture/` | `CaptureCoordinator`, `PauseClock`, `ScreenCapture` (SCStream), `CameraCapture` (AVCaptureSession), `CaptureContention` (detect Granola/Wispr/etc holding the mic), `SampleBufferRetiming` |
 | `Pepper/Recording/` | `TrackWriter` (one writer for all four raw tracks), `EventRecorder`, `CursorSampler`, `RecordingBundle` layout, `TeleprompterController` |
 | `Pepper/Soundboard/` | Soundboard engine + cues + hotkey binding |
-| `Pepper/Editor/` | `RecordingProject`, `EditorComposition`, `LiveCompositor`, `OverlaySettings` (the one value both preview and export render from), `EditorViewModel`, `EditState` + `SidecarStore` (per-recording edits, debounced saves), keyframe models + `RampKeyframe` (shared zoom/talking-head editing rules), `SilenceAnalyzer`, `SourceCoordinateMapper`, `TrimMap`; `EditorView` (window toolbar: details, Send to Orbis, Export) with `Inspector/` (`EditorInspector`: plain-language feature rows with switches, one open at a time via `vm.openInspectorFeature`, plus Quick polish; timeline/preview clicks open the matching row), `Timeline/`, `ExportSheet` (+ the save panel's Quality accessory) |
+| `Pepper/Editor/` | `RecordingProject`, `EditorComposition`, `LiveCompositor`, `OverlaySettings` (the one value both preview and export render from), `EditorViewModel` (state and setup; behaviour by area in `EditorViewModel+Playback/+Trim/+Captions/+Keyframes/+Audio/+Export`, so some state has internal setters for those files), `EditState` + `SidecarStore` (per-recording edits, debounced saves), keyframe models + `RampKeyframe` (shared zoom/talking-head editing rules), `SilenceAnalyzer`, `SourceCoordinateMapper`, `TrimMap`; `EditorView` (window toolbar: details, Send to Orbis, Export) with `Inspector/` (`EditorInspector`: plain-language feature rows with switches, one open at a time via `vm.openInspectorFeature`, plus Quick polish; timeline/preview clicks open the matching row), `Timeline/`, `ExportSheet` (+ the save panel's Quality accessory) |
 | `Pepper/Rendering/` | `FinalRenderer` (reader → compositor → writer), `ExportQuality`, `SRTFormatter` |
 | `Pepper/Orbis/` | "Export to Orbis": `OrbisAccount` (connection owner — OAuth 2.1 PKCE + loopback sign-in as client `pepper-mac`, scope `videos`, same flow as Muesli; refresh/revoke), `OAuthLoopbackServer`, `OrbisClient` (REST; asks `OrbisAccount` for a credential per request), `OrbisExportController` (FinalRenderer → presigned R2 PUT → ingest-assets), `OrbisExportSheet`, `OrbisKeychain` (refresh token keyed per host, never UserDefaults), `OrbisSettings` (host + last-used form values). No custom URL scheme — an old token-delivery link was a token-injection hole |
-| `Pepper/UI/` | `Home/` (main window: `HomeWindowController` — hides while a recording starts, back if it's cancelled — `HomeModel`, `HomeView`, in the setup/sign-in page look; a recent recording's right-click menu opens, reveals or trashes it, never while it's rendering or exporting); `FriendlyError` (+ `FriendlyErrorView`); SwiftUI/AppKit windows (Settings, Soundboard, SourcePicker, RegionSelector, Countdown, RecordingBorder, WebcamPreview, Teleprompter, VideoReadyNotice — Pepper's own card, not a system notification, so no permission prompt); `Onboarding/` (setup walkthrough, modelled on Muesli's); `Brand` (SBS tokens shared with Muesli: colorsets, cobalt `AccentColor` app-wide, Nantes font in `Resources/Fonts`, Neon/Quiet button styles, `brandCard`/`brandKicker`/`brandTimecode`). The editor follows Muesli's rules: native toolbar/forms/menus/sheets; ground strips (timeline, inspector) carrying surface cards; one Neon CTA (Quick polish); Persimmon = live/playhead, Violet = automatic (zooms), Emerald = you (full-screen moments), Teal = caption blocks. Recording indicators (the border, the menu-bar record icon) stay system red on purpose: red is universally "recording" |
+| `Pepper/UI/` | `Home/` (main window: `HomeWindowController` — hides while a recording starts, back if it's cancelled — `HomeModel`, `HomeView`, in the setup/sign-in page look; Teleprompter and Soundboard buttons; a recent recording's right-click menu opens, reveals, renames or trashes it, never while it's rendering or exporting); `FriendlyError` (+ `FriendlyErrorView`); SwiftUI/AppKit windows (Settings, Soundboard, SourcePicker, RegionSelector, Countdown, RecordingBorder, WebcamPreview, Teleprompter, VideoReadyNotice — Pepper's own card, not a system notification, so no permission prompt); `Onboarding/` (setup walkthrough, modelled on Muesli's); `Brand` (SBS tokens shared with Muesli: colorsets, cobalt `AccentColor` app-wide, Nantes font in `Resources/Fonts`, Neon/Quiet button styles, `brandCard`/`brandKicker`/`brandTimecode`). The editor follows Muesli's rules: native toolbar/forms/menus/sheets; ground strips (timeline, inspector) carrying surface cards; one Neon CTA (Quick polish); Persimmon = live/playhead, Violet = automatic (zooms), Emerald = you (full-screen moments), Teal = caption blocks. Recording indicators (the border, the menu-bar record icon) stay system red on purpose: red is universally "recording" |
 | `Pepper/Hotkeys/` | `GlobalHotkey` — Carbon `RegisterEventHotKey` wrapper |
 | `Pepper/Settings/` | `Settings` — UserDefaults-backed singleton, posts `Settings.didChange` notification |
 
@@ -183,11 +190,9 @@ the same time base the editor uses for seeking. Don't mix wall-clock
   - Accessibility — `NSEvent.addGlobalMonitorForEvents` (clicks / keys
     feed the event log and soundboard hotkeys). The soundboard's key
     monitors run only during a recording or while its window is open.
-  - Speech Recognition — captions on macOS 14/15 only (legacy
-    `SFSpeechRecognizer`). `SpeechAnalyzer` on 26+ needs none, so
-    `CaptionTranscriber` never asks there. Where it's needed it is asked
-    for only from a button whose note says macOS will ask
-    (`CaptionTranscriber.willAskForPermission`).
+  - No Speech Recognition: captions use `SpeechAnalyzer`, which needs no
+    permission (Pepper requires macOS 26; the older `SFSpeechRecognizer`
+    path and its prompt are gone).
 - **Never ask macOS and open System Settings at once** (Muesli's rule):
   macOS's own request then sits unanswered behind the windows. Screen
   Recording and Accessibility ask once per launch and open the pane only
@@ -282,12 +287,23 @@ Same model as Muesli (`~/Muesli/scripts/release.sh`, docs/DEPLOYMENT.md §7).
    - `generate_appcast --account ed25519` over `dist/` (refuses if the
      Keychain key doesn't match `SUPublicEDKey`), then stages
      `dist/upload-X.Y.Z/` (appcast, zip, DMG, new deltas), tags, pushes.
-3. The user uploads `dist/upload-X.Y.Z/*` to the Orbis Replit project's
-   `client/public/download/pepper/`, replacing `appcast.xml`, and
-   redeploys. Files only reach production with a deploy.
-4. `scripts/release.sh --verify` — confirms Orbis serves the appcast, zip
-   and DMG with matching sizes and real content types (Orbis used to
-   answer missing files with 200 + its SPA HTML; it returns 404 now).
+3. `scripts/publish.sh X.Y.Z` publishes `dist/upload-X.Y.Z/` through
+   Orbis's release-only API, using Muesli's release tool
+   (`~/Muesli/scripts/publish.sh --app pepper`, or `MUESLI_REPO`; contract
+   in Muesli's `docs/ORBIS-INTEGRATION.md` §6.1): archives first, appcast
+   last, then the live feed and every file checked byte for byte. No Orbis
+   deploy is needed. Orbis refuses a feed that goes back a build.
+   `--dry-run` and `--status` change nothing. The release sign-in (scope
+   `releases`, client `sbs-release-cli`, Darrell's account only) is shared
+   with Muesli and kept in the Keychain; `--sign-in` once per Mac, and
+   never handle the token. **Publish only when the user says to ship or
+   release**: building and tagging are local, publishing reaches every
+   installed copy within a day.
+4. `scripts/release.sh --verify` still checks the public URLs (sizes and
+   real content types) without signing in. The old route, uploading
+   `dist/upload-X.Y.Z/*` to the Orbis Replit project's
+   `client/public/download/pepper/` and redeploying, is the fallback if
+   the API is down.
 
 `dist/` is gitignored but must be kept between releases: generate_appcast
 reads the previous feed and old zips (for deltas) from it.

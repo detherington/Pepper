@@ -188,7 +188,6 @@ enum SystemSettingsPane: String {
     case camera = "Privacy_Camera"
     case microphone = "Privacy_Microphone"
     case accessibility = "Privacy_Accessibility"
-    case speechRecognition = "Privacy_SpeechRecognition"
 
     init(mediaType: AVMediaType) {
         self = mediaType == .video ? .camera : .microphone

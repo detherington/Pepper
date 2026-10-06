@@ -188,11 +188,6 @@ private struct QuickPolishCard: View {
                 Text("Quick polish").brandDisplay(14)
             }
             Note("Zoom into your clicks and add captions, in one go. You can fine-tune anything below.")
-            // Said before the click, never sprung after it (macOS 14 and
-            // 15 only; newer Macs write captions without asking).
-            if vm.transcription == nil, CaptionTranscriber.willAskForPermission {
-                Note("For the captions, macOS will ask to let Pepper use Speech Recognition. Your audio stays on this Mac.")
-            }
             // The panel's one Neon call to action.
             Button {
                 vm.quickPolish()

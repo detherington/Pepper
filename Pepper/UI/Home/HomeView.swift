@@ -107,6 +107,9 @@ struct HomeView: View {
         .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: Brand.Radius.field, style: .continuous))
     }
 
+    /// What the next recording will use, and the recording aids. The
+    /// teleprompter and soundboard used to be only in the menu-bar menu,
+    /// where new users didn't find them.
     private var devices: some View {
         HStack(spacing: 16) {
             deviceLabel(model.cameraLabel, systemImage: "video")
@@ -114,6 +117,17 @@ struct HomeView: View {
             Button("Change…", action: actions.showSettings)
                 .buttonStyle(.link)
                 .font(.system(size: 12.5))
+            Spacer(minLength: 8)
+            Button(action: actions.toggleTeleprompter) {
+                Label(model.teleprompterShown ? "Hide Teleprompter" : "Teleprompter", systemImage: "text.alignleft")
+            }
+            .buttonStyle(QuietButtonStyle(height: 28))
+            .help("A script that scrolls beside the camera while you record")
+            Button(action: actions.showSoundboard) {
+                Label("Soundboard", systemImage: "speaker.wave.2")
+            }
+            .buttonStyle(QuietButtonStyle(height: 28))
+            .help("Sounds you can play into a recording with a shortcut")
         }
     }
 
@@ -152,6 +166,7 @@ struct HomeView: View {
                             duration: model.durations[recent.url],
                             open: { actions.open(recent.url) },
                             reveal: { actions.reveal(recent.url) },
+                            rename: { actions.rename(recent.url) },
                             trash: { actions.trash(recent.url) }
                         )
                     }
@@ -213,6 +228,7 @@ private struct RecentTile: View {
     let duration: String?
     let open: () -> Void
     let reveal: () -> Void
+    let rename: () -> Void
     let trash: () -> Void
     @State private var isHovering = false
 
@@ -267,6 +283,7 @@ private struct RecentTile: View {
         .contextMenu {
             Button("Open in Editor", action: open)
             Button("Show in Finder", action: reveal)
+            Button("Rename…", action: rename)
             Divider()
             Button("Move to Trash…", role: .destructive, action: trash)
         }

@@ -1,15 +1,8 @@
 import Foundation
 
-/// One displayable subtitle line — a grouping of consecutive words from
-/// the speech recognizer that belong on screen at the same time.
-///
-/// Word-level segments from the legacy `SFSpeechRecognizer` path would
-/// flash individually for every syllable boundary, which reads as
-/// flicker. `CaptionTranscriber.groupIntoLines` collapses those words
-/// into lines sized for human reading (up to ~40 chars / 4 seconds /
-/// pauses longer than ~0.6s). The modern macOS 26 `SpeechAnalyzer`
-/// path returns already-grouped `CMTimeRange` results, so line
-/// grouping is only applied to the legacy + cloud paths.
+/// One displayable subtitle line — a run of words that belong on screen
+/// at the same time. `SpeechAnalyzer` returns its results already grouped
+/// this way, each with its own time range.
 struct TranscriptionLine: Identifiable, Codable, Equatable, Sendable {
     /// Stable identifier for SwiftUI list + edit tracking. Persisted so
     /// IDs survive disk round-trips and undo snapshots compare cleanly.

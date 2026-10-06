@@ -135,7 +135,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             showOpenPanel: { [weak self] in self?.editors.showOpenPanel() },
             showSettings: { [weak self] in self?.settingsController.show() },
             revealRecordings: { [weak self] in self?.revealOutput() },
+            toggleTeleprompter: { [weak self] in self?.toggleTeleprompter() },
+            showSoundboard: { [weak self] in self?.soundboardWindow.show() },
             reveal: { [weak self] in self?.revealRecording($0) },
+            rename: { [weak self] in self?.renameRecording($0) },
             trash: { [weak self] in self?.trashRecording($0) }
         ))
 
@@ -509,16 +512,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSWorkspace.shared.activateFileViewerSelecting(files(of: recording))
     }
 
+    /// Its video is still being made or exported: moving or renaming the
+    /// files then would pull them out from under that render.
+    private func refuseIfBusy(_ recording: URL) -> Bool {
+        guard self.recording.renderingBundles.contains(recording.standardizedFileURL) || editors.isExporting(recording) else {
+            return false
+        }
+        menuBar.flashError(
+            title: "This recording is busy",
+            message: "Pepper is still saving or exporting its video. Try again when that's finished."
+        )
+        return true
+    }
+
+    /// The name shows in the main window, the editor's title and as the
+    /// default Orbis title, and on both files in Movies › Pepper. An open
+    /// editor is closed (saving its edits) and reopened on the renamed
+    /// recording.
+    private func renameRecording(_ recording: URL) {
+        if refuseIfBusy(recording) { return }
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Rename Recording"
+        alert.informativeText = "The new name shows in Pepper and on the recording's files in Movies › Pepper."
+        let field = NSTextField(string: RecordingBundle.displayTitle(recording))
+        field.frame = NSRect(x: 0, y: 0, width: 300, height: 24)
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Rename")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard !RecordingBundle.fileSafeName(field.stringValue).isEmpty else { return }
+        let wasOpen = editors.isOpen(recording)
+        editors.close(recording)
+        do {
+            let renamed = try RecordingBundle.rename(recording, to: field.stringValue)
+            if wasOpen { editors.open(renamed) }
+        } catch {
+            let problem = FriendlyError(error)
+            menuBar.flashError(title: "Couldn't rename the recording", message: problem.advice, details: problem.details)
+            if wasOpen { editors.open(recording) }
+        }
+        home.refreshRecordings()
+    }
+
     /// Both files to the Trash, after asking: they can be put back from
     /// there, but a recording is the one thing Pepper can't remake.
     private func trashRecording(_ recording: URL) {
-        if self.recording.renderingBundles.contains(recording.standardizedFileURL) || editors.isExporting(recording) {
-            menuBar.flashError(
-                title: "This recording is busy",
-                message: "Pepper is still saving or exporting its video. Try again when that's finished."
-            )
-            return
-        }
+        if refuseIfBusy(recording) { return }
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = "Move this recording to the Trash?"

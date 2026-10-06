@@ -35,14 +35,14 @@ final class CaptureDeviceMonitor {
             // no device was connected, retry; if it's running, swap inputs so
             // the user's saved device wins when it comes online.
             NotificationCenter.default.addObserver(
-                forName: .AVCaptureDeviceWasConnected, object: nil, queue: .main
+                forName: AVCaptureDevice.wasConnectedNotification, object: nil, queue: .main
             ) { [weak self] _ in
                 Task { @MainActor in self?.deviceConnected() }
             },
             // Hot-unplug: fall back to another device if one is available,
             // otherwise clear the preview so it doesn't sit on a stale frame.
             NotificationCenter.default.addObserver(
-                forName: .AVCaptureDeviceWasDisconnected, object: nil, queue: .main
+                forName: AVCaptureDevice.wasDisconnectedNotification, object: nil, queue: .main
             ) { [weak self] _ in
                 Task { @MainActor in self?.deviceDisconnected() }
             },

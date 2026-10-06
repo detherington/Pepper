@@ -9,6 +9,12 @@ import AppKit
 @MainActor
 @Observable
 final class EditorViewModel {
+    // The editor's state and setup live here; what it does is split by
+    // area into EditorViewModel+Playback, +Trim, +Captions, +Keyframes,
+    // +Audio and +Export. Some state has an internal setter only so
+    // those files can update it: views read it and change it through the
+    // methods.
+
     let project: RecordingProject
     let outputSize: CGSize
     let backingScale: CGFloat
@@ -20,20 +26,20 @@ final class EditorViewModel {
 
     // Timeline / playback state
     private(set) var duration: CMTime = .zero
-    private(set) var currentTime: CMTime = .zero
-    private(set) var isPlaying: Bool = false
+    var currentTime: CMTime = .zero
+    var isPlaying: Bool = false
 
     /// Trim range in composition time. `trimStart` defaults to .zero and
     /// `trimEnd` defaults to the full duration once the composition loads.
-    private(set) var trimStart: CMTime = .zero { didSet { scheduleEditStateSave() } }
-    private(set) var trimEnd: CMTime = .zero { didSet { scheduleEditStateSave() } }
+    var trimStart: CMTime = .zero { didSet { scheduleEditStateSave() } }
+    var trimEnd: CMTime = .zero { didSet { scheduleEditStateSave() } }
 
     /// Interior cut ranges — regions in source-composition time that have
     /// been excised from the middle of the recording. Sorted, non-
     /// overlapping, strictly inside `[trimStart, trimEnd]`. Mutated via
     /// `insertCut` / `removeCut` / `clearCuts`; use `trimMap` (computed
     /// below) for any read that needs to know the kept ranges.
-    private(set) var cutRanges: [CMTimeRange] = [] { didSet { scheduleEditStateSave() } }
+    var cutRanges: [CMTimeRange] = [] { didSet { scheduleEditStateSave() } }
 
     /// `edit-state.json` as loaded at open — seeds webcam layout in init
     /// and trim/cuts once the composition's duration is known.
@@ -95,10 +101,10 @@ final class EditorViewModel {
     }
 
     // Export state
-    private(set) var isExporting = false
-    private(set) var exportProgress: Float = 0
+    var isExporting = false
+    var exportProgress: Float = 0
     var exportError: (any Error)?
-    private var exportTask: Task<Void, Never>?
+    var exportTask: Task<Void, Never>?
 
     /// When non-nil, the preview is in "click to place zoom focus"
     /// mode — the EditorView overlays a hit-catcher that turns the
@@ -107,15 +113,14 @@ final class EditorViewModel {
     /// row button's label while we wait.
     var zoomTargetBeingPlaced: UUID?
 
-
     // AVPlayer observers (torn down in deinit — marked nonisolated(unsafe)
     // so deinit can reference them without @MainActor hops).
-    nonisolated(unsafe) private var timeObserverToken: Any?
-    nonisolated(unsafe) private var rateObservation: NSKeyValueObservation?
+    @ObservationIgnored nonisolated(unsafe) var timeObserverToken: Any?
+    @ObservationIgnored nonisolated(unsafe) var rateObservation: NSKeyValueObservation?
     /// Boundary observers that seek past each interior cut during
     /// playback. Rebuilt whenever `cutRanges` changes via
     /// `refreshCutBoundaryObservers()`. One token per observer registration.
-    nonisolated(unsafe) private var cutBoundaryTokens: [Any] = []
+    @ObservationIgnored nonisolated(unsafe) var cutBoundaryTokens: [Any] = []
 
     // Editable overlay parameters. `didSet` writes through to the compositor's
     // shared state and nudges the player to redraw if paused.
@@ -189,7 +194,7 @@ final class EditorViewModel {
     /// Set after the composition loads (we need its duration). Toggleable
     /// from the inspector; persisted to Settings so it survives across
     /// editor sessions.
-    private(set) var zoomKeyframes: [ZoomKeyframe] = []
+    var zoomKeyframes: [ZoomKeyframe] = []
     var zoomEnabled: Bool {
         didSet {
             if oldValue != zoomEnabled {
@@ -239,12 +244,31 @@ final class EditorViewModel {
     /// shrinks back. Persisted per-recording to `talking-head.json` in
     /// the sidecar so they survive closing + reopening the editor.
     /// Always sorted by `startTime`.
-    private(set) var talkingHeadKeyframes: [TalkingHeadKeyframe] = []
+    var talkingHeadKeyframes: [TalkingHeadKeyframe] = []
 
     /// Peak-amplitude samples for the waveform strip behind the trim
     /// track. Computed asynchronously on editor open so it doesn't
     /// block the loading overlay.
     private(set) var waveformSamples: [Float] = []
+
+    // Stored here because extensions can't hold state.
+
+    /// Visible state for the auto-cut button — prevents double-clicks
+    /// while detection is in flight and drives a spinner in the UI.
+    var isAutoCutting: Bool = false
+
+    /// Published hint: how many cuts the last auto-cut run inserted.
+    /// Nil unless an auto-cut run completed since the editor loaded.
+    /// Cleared when the user manually mutates cuts.
+    var lastAutoCutCount: Int?
+
+    var polishReport: PolishReport?
+
+    var pendingMenuCommand: MenuCommand?
+
+    /// The Orbis sheet owns its controller's lifetime; this weak link
+    /// just lets app-level quit handling find an in-flight upload.
+    @ObservationIgnored weak var activeOrbisExport: OrbisExportController?
 
     // MARK: - Undo / Redo
 
@@ -312,7 +336,7 @@ final class EditorViewModel {
     ///
     /// Safe to call during undo / redo — `UndoManager` detects the
     /// direction and puts the inverse on the right stack.
-    fileprivate func registerUndoableChange<T>(
+    func registerUndoableChange<T>(
         _ keyPath: ReferenceWritableKeyPath<EditorViewModel, T>,
         from oldValue: T,
         actionName: String,
@@ -336,7 +360,7 @@ final class EditorViewModel {
     /// drags) collapse into one step. The coalesced path used to go
     /// through a reset of the streak key, so every tick of a drag became
     /// its own undo step.
-    fileprivate func registerUndoableSnapshot<State>(
+    func registerUndoableSnapshot<State>(
         _ actionName: String,
         coalesceKey: AnyHashable? = nil,
         capture: @escaping (EditorViewModel) -> State,
@@ -413,32 +437,15 @@ final class EditorViewModel {
     /// Burned-in captions for the mic track. Starts nil until the user
     /// either opens a bundle that already has a `transcription.json` or
     /// runs `generateCaptions()`.
-    private(set) var transcription: TranscriptionLog?
+    var transcription: TranscriptionLog?
     /// True while `generateCaptions()` is running; drives the spinner /
     /// disabled state in the inspector.
-    private(set) var isTranscribing: Bool = false
+    var isTranscribing: Bool = false
     /// Surface the last transcription error to the inspector so the user
-    /// can see why generation failed (permission denied, on-device
-    /// model unavailable, etc).
+    /// can see why generation failed (no speech heard, speech model
+    /// unavailable, etc).
     var transcriptionError: (any Error)?
 
-    /// True iff the last failure was specifically "no speech detected" —
-    /// the case where we might usefully retry with cloud fallback
-    /// enabled. Drives visibility of the cloud-retry button in the
-    /// inspector.
-    var transcriptionErrorIsNoSpeech: Bool {
-        guard let err = transcriptionError as? CaptionTranscriber.TranscriberError else { return false }
-        if case .noSpeechDetected = err { return true }
-        return false
-    }
-
-    /// True iff the last failure was Speech Recognition being off for
-    /// Pepper, so the inspector can offer the System Settings pane.
-    var transcriptionErrorIsPermissionDenied: Bool {
-        guard let err = transcriptionError as? CaptionTranscriber.TranscriberError else { return false }
-        if case .notAuthorized = err { return true }
-        return false
-    }
     /// Persisted styling for the caption strip. Default is enabled so a
     /// freshly-generated transcription shows immediately.
     var captionStyle: CaptionStyle {
@@ -517,7 +524,7 @@ final class EditorViewModel {
     /// True while `MicCleaner` is generating `mic_cleaned.caf`. Drives
     /// a progress indicator in the inspector — the cleaner runs on a
     /// detached task so UI stays responsive.
-    private(set) var isCleaningMic: Bool = false
+    var isCleaningMic: Bool = false
 
     /// Webcam background style (off / blur / color). Persisted so the
     /// user's chosen mode + blur radius + colour follow them across
@@ -732,77 +739,6 @@ final class EditorViewModel {
         player.replaceCurrentItem(with: nil)
     }
 
-    // MARK: - Noise reduction
-
-    /// URL of the cleaned mic file to feed into the composition, or
-    /// nil to pass through the raw `mic.m4a`. Nil when noise reduction
-    /// is disabled, or enabled-but-file-not-yet-generated (async
-    /// generation is in flight).
-    private func effectiveMicOverrideURL() -> URL? {
-        guard noiseReductionStyle.enabled else { return nil }
-        let url = project.bundle.cleanedMicAudioURL
-        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-        return url
-    }
-
-    /// Called from `noiseReductionStyle.didSet` when the user toggles
-    /// or switches strength. Decides whether we need to regenerate the
-    /// cleaned file + rebuild the composition.
-    private func handleNoiseReductionChange(previous: NoiseReductionStyle) {
-        let cleanedURL = project.bundle.cleanedMicAudioURL
-        let needsRegen: Bool = {
-            // Strength change invalidates the existing cleaned file —
-            // we don't stamp the strength into the file name, so we
-            // regenerate whenever the recipe shifts.
-            if noiseReductionStyle.enabled,
-               previous.strength != noiseReductionStyle.strength {
-                return true
-            }
-            // First time enabling on this recording — generate if
-            // missing.
-            if noiseReductionStyle.enabled,
-               !FileManager.default.fileExists(atPath: cleanedURL.path) {
-                return true
-            }
-            return false
-        }()
-
-        if needsRegen {
-            generateCleanedMic()
-        } else {
-            // Toggle without regen — just swap the composition to
-            // point at the (possibly now-inactive) cleaned file.
-            Task { await self.rebuildComposition() }
-        }
-    }
-
-    private func generateCleanedMic() {
-        guard !isCleaningMic else { return }
-        isCleaningMic = true
-        let inputURL = project.bundle.micAudioURL
-        let outputURL = project.bundle.cleanedMicAudioURL
-        let settings = noiseReductionStyle.strength.cleanerSettings
-        Task { [weak self] in
-            do {
-                try await Task.detached(priority: .userInitiated) {
-                    try MicCleaner.clean(
-                        inputURL: inputURL,
-                        outputURL: outputURL,
-                        settings: settings
-                    )
-                }.value
-                PepperDebug.log("NR: cleaned mic written to \(outputURL.lastPathComponent)")
-            } catch {
-                PepperDebug.log("NR: cleaner failed: \(error.localizedDescription)")
-            }
-            await MainActor.run {
-                guard let self else { return }
-                self.isCleaningMic = false
-                Task { await self.rebuildComposition() }
-            }
-        }
-    }
-
     // MARK: - Composition loading
 
     private func loadComposition() async {
@@ -910,7 +846,7 @@ final class EditorViewModel {
     /// reloaded zoom keyframes from the stale snapshot taken at open.
     /// Each composition owns a new compositor `State`, so re-apply the
     /// layout, then restore the playhead and play state.
-    private func rebuildComposition() async {
+    func rebuildComposition() async {
         guard compositionResult != nil else { return }
         let resumeAt = currentTime
         let wasPlaying = isPlaying
@@ -942,15 +878,15 @@ final class EditorViewModel {
     // MARK: - Edit-state persistence
 
     /// Sidecar files the editor writes, each through `sidecars` (debounced).
-    private enum SidecarFile: Hashable {
+    enum SidecarFile: Hashable {
         case editState, zoom, talkingHead, transcription
     }
 
-    private func scheduleSave(_ file: SidecarFile) {
+    func scheduleSave(_ file: SidecarFile) {
         sidecars.schedule(url(for: file)) { try self.contents(of: file) }
     }
 
-    private func saveNow(_ file: SidecarFile) {
+    func saveNow(_ file: SidecarFile) {
         sidecars.writeNow(url(for: file)) { try self.contents(of: file) }
     }
 
@@ -1045,553 +981,13 @@ final class EditorViewModel {
         lastUndoCoalesceKey = nil
     }
 
-    private func attachPlayerObservers() {
-        // Periodic time observer — drives the scrubber + trim-end enforcement.
-        // ~30 updates/sec is plenty for a timeline UI and is cheap.
-        let interval = CMTime(value: 1, timescale: 30)
-        timeObserverToken = player.addPeriodicTimeObserver(
-            forInterval: interval,
-            queue: .main
-        ) { [weak self] time in
-            guard let self else { return }
-            self.currentTime = time
-            if self.isPlaying,
-               self.trimEnd.isValid,
-               CMTimeCompare(time, self.trimEnd) >= 0 {
-                // Stop at the trim-out point.
-                self.player.pause()
-                // Snap exactly to trimEnd so the UI reads cleanly.
-                self.player.seek(to: self.trimEnd, toleranceBefore: .zero, toleranceAfter: .zero)
-            }
-            // Fallback for interior cuts: if the playhead slipped into
-            // a cut (e.g. a system hiccup delayed the boundary observer
-            // past the cut.start), jump out. The boundary observer below
-            // fires first in the common case, so this rarely runs.
-            if let cut = self.cutRanges.first(where: {
-                CMTimeCompare(time, $0.start) >= 0 && CMTimeCompare(time, $0.end) < 0
-            }) {
-                self.player.seek(to: cut.end, toleranceBefore: .zero, toleranceAfter: .zero)
-            }
-        }
-
-        rateObservation = player.observe(\.rate, options: [.initial, .new]) { [weak self] player, _ in
-            let playing = player.rate > 0
-            Task { @MainActor in self?.isPlaying = playing }
-        }
-    }
-
-    /// Wire up per-cut boundary observers so playback skips past each
-    /// interior cut in real-time. Called whenever `cutRanges` changes
-    /// (via `applyLayout`). Each observer fires exactly when the
-    /// playhead crosses a cut-start and immediately seeks to the
-    /// cut-end. Without this the user would see cut content play back
-    /// during preview even though it won't be in the exported file.
-    private func refreshCutBoundaryObservers() {
-        for token in cutBoundaryTokens {
-            player.removeTimeObserver(token)
-        }
-        cutBoundaryTokens.removeAll(keepingCapacity: true)
-        for cut in cutRanges {
-            let start = cut.start
-            let end = cut.end
-            let token = player.addBoundaryTimeObserver(
-                forTimes: [NSValue(time: start)],
-                queue: .main
-            ) { [weak self] in
-                guard let self else { return }
-                // Only seek forward — if the user is scrubbing backward
-                // past the cut, the seek clamp in `seek(to:)` has
-                // already handled it.
-                guard CMTimeCompare(self.player.currentTime(), end) < 0 else { return }
-                self.player.seek(to: end, toleranceBefore: .zero, toleranceAfter: .zero)
-            }
-            cutBoundaryTokens.append(token)
-        }
-    }
-
-    /// If `time` falls inside an interior cut, return the nearest kept
-    /// boundary (snap to `cut.end` for forward motion; caller can still
-    /// force backward via `preferBackward`). Otherwise return `time`
-    /// unchanged. Used by `seek(to:)` + scrubber drags.
-    private func snapOutOfCut(_ time: CMTime, preferBackward: Bool = false) -> CMTime {
-        for cut in cutRanges {
-            if CMTimeCompare(time, cut.start) > 0 && CMTimeCompare(time, cut.end) < 0 {
-                return preferBackward ? cut.start : cut.end
-            }
-        }
-        return time
-    }
-
-    // MARK: - Playback controls
-
-    func togglePlayPause() {
-        if isPlaying {
-            player.pause()
-        } else {
-            // If we're at or past trimEnd, or before trimStart, jump to trimStart first.
-            if CMTimeCompare(currentTime, trimEnd) >= 0 || CMTimeCompare(currentTime, trimStart) < 0 {
-                player.seek(to: trimStart, toleranceBefore: .zero, toleranceAfter: .zero)
-            }
-            player.play()
-        }
-    }
-
-    /// Seek to an arbitrary composition time. Clamped to [0, duration]
-    /// and snapped out of any interior cut so the user never parks the
-    /// playhead inside a region that won't exist in the exported file.
-    func seek(to time: CMTime) {
-        let clamped = clamp(time, lower: .zero, upper: duration)
-        let snapped = snapOutOfCut(clamped)
-        player.seek(to: snapped, toleranceBefore: .zero, toleranceAfter: .zero)
-    }
-
-    // MARK: - Keyboard navigation
-
-    /// One-frame step at 60fps — smallest resolution the compositor
-    /// renders. Used by arrow-key nudges.
-    func stepFrame(forward: Bool) {
-        let frame = CMTime(value: 1, timescale: 60)
-        seek(to: forward ? CMTimeAdd(currentTime, frame) : CMTimeSubtract(currentTime, frame))
-    }
-
-    /// Mid-sized jump (1 second). Used by shift-arrow.
-    func stepSecond(forward: Bool) {
-        let step = CMTime(value: 1, timescale: 1)
-        seek(to: forward ? CMTimeAdd(currentTime, step) : CMTimeSubtract(currentTime, step))
-    }
-
-    /// Larger jump (5 seconds). Used by J / L.
-    func stepFiveSeconds(forward: Bool) {
-        let step = CMTime(value: 5, timescale: 1)
-        seek(to: forward ? CMTimeAdd(currentTime, step) : CMTimeSubtract(currentTime, step))
-    }
-
-    /// K — pauses regardless of current state (spacebar toggles; K is
-    /// the "definitely pause now" shortcut matching pro editor apps).
-    func pausePlayback() {
-        player.pause()
-    }
-
-    // MARK: - Trim controls
-
-    /// Set the in-point. Clamped so there's at least 0.25s of trim duration.
-    func setTrimStart(_ time: CMTime) {
-        let minGap = CMTime(value: 250, timescale: 1000)
-        let upperBound = CMTimeSubtract(trimEnd, minGap)
-        let clamped = clamp(time, lower: .zero, upper: upperBound)
-        guard clamped != trimStart else { return }
-        let old = trimStart
-        trimStart = clamped
-        applyLayout()  // outputRange shifted — re-prime cards/fades
-        // trimStart is a plain var (no `didSet`), so the keypath-based
-        // helper can't rely on didSet to register the redo. Use the
-        // snapshot form, which explicitly re-registers inside its undo
-        // closure.
-        registerUndoableSnapshot(
-            "Change Trim In",
-            coalesceKey: "trimStart",
-            capture: { $0.trimStart },
-            oldState: old
-        ) { vm, state in
-            vm.trimStart = state
-            vm.applyLayout()
-        }
-    }
-
-    /// Set the out-point. Clamped so there's at least 0.25s of trim duration.
-    func setTrimEnd(_ time: CMTime) {
-        let minGap = CMTime(value: 250, timescale: 1000)
-        let lowerBound = CMTimeAdd(trimStart, minGap)
-        let clamped = clamp(time, lower: lowerBound, upper: duration)
-        guard clamped != trimEnd else { return }
-        let old = trimEnd
-        trimEnd = clamped
-        applyLayout()
-        registerUndoableSnapshot(
-            "Change Trim Out",
-            coalesceKey: "trimEnd",
-            capture: { $0.trimEnd },
-            oldState: old
-        ) { vm, state in
-            vm.trimEnd = state
-            vm.applyLayout()
-        }
-    }
-
-    func setTrimStartToCurrent() { setTrimStart(currentTime) }
-    func setTrimEndToCurrent()   { setTrimEnd(currentTime) }
-
-    func clearTrim() {
-        let oldStart = trimStart
-        let oldEnd = trimEnd
-        trimStart = .zero
-        trimEnd = duration
-        applyLayout()
-        registerUndoableSnapshot(
-            "Reset Trim",
-            capture: { vm in (vm.trimStart, vm.trimEnd) },
-            oldState: (oldStart, oldEnd)
-        ) { vm, state in
-            vm.trimStart = state.0
-            vm.trimEnd = state.1
-            vm.applyLayout()
-        }
-    }
-
-    // MARK: - Interior cuts (ripple delete)
-
-    /// Smallest cut we're willing to place. Below this it's almost
-    /// certainly a misclick, and it introduces jitter in the exported
-    /// file without actually saving anything.
-    private static let minCutDuration = CMTime(value: 100, timescale: 1000)  // 0.1s
-
-    /// Excise `range` (in source-composition time) from the output.
-    /// Ranges overlapping existing cuts are merged by `TrimMap`;
-    /// ranges outside the outer trim are clamped / dropped. No-op if
-    /// the clamped range is shorter than `minCutDuration`.
-    func insertCut(_ range: CMTimeRange) {
-        // Clamp to outer trim before the min-duration check so a cut
-        // that extends past trimEnd still counts as long as the clipped
-        // portion is long enough to be meaningful.
-        let clampedStart = clamp(range.start, lower: trimStart, upper: trimEnd)
-        let clampedEnd   = clamp(range.end,   lower: trimStart, upper: trimEnd)
-        guard CMTimeCompare(clampedEnd, clampedStart) > 0 else { return }
-        let clamped = CMTimeRange(start: clampedStart, end: clampedEnd)
-        guard CMTimeCompare(clamped.duration, Self.minCutDuration) >= 0 else { return }
-        let old = cutRanges
-        // Round-trip through TrimMap to merge + sort with any existing.
-        let merged = TrimMap(outerTrim: trimRange, cuts: old + [clamped]).cuts
-        guard merged != old else { return }
-        cutRanges = merged
-        applyLayout()
-        registerUndoableSnapshot(
-            "Cut Section",
-            capture: { $0.cutRanges },
-            oldState: old
-        ) { vm, state in
-            vm.cutRanges = state
-            vm.applyLayout()
-        }
-    }
-
-    /// Remove the cut at `index` (no-op if out of range). Restores the
-    /// source region to the output timeline.
-    func removeCut(at index: Int) {
-        guard cutRanges.indices.contains(index) else { return }
-        let old = cutRanges
-        var next = cutRanges
-        next.remove(at: index)
-        cutRanges = next
-        applyLayout()
-        registerUndoableSnapshot(
-            "Restore Cut",
-            capture: { $0.cutRanges },
-            oldState: old
-        ) { vm, state in
-            vm.cutRanges = state
-            vm.applyLayout()
-        }
-    }
-
-    /// Anchor a range selection at the current playhead. Subsequent
-    /// scrubbing extends the selection to that new playhead position.
-    func markSelectionStart() {
-        selectionStart = currentTime
-    }
-
-    /// Drop the in-progress selection without cutting.
-    func clearSelection() {
-        selectionStart = nil
-    }
-
-    /// If a selection is active, convert it into a cut and clear the
-    /// selection anchor. No-op if there's no active selection.
-    func cutSelection() {
-        guard let range = selectionRange else { return }
-        insertCut(range)
-        selectionStart = nil
-    }
-
-    /// Wipe all interior cuts (keeps outer trim intact).
-    func clearCuts() {
-        guard !cutRanges.isEmpty else { return }
-        let old = cutRanges
-        cutRanges = []
-        applyLayout()
-        registerUndoableSnapshot(
-            "Clear Cuts",
-            capture: { $0.cutRanges },
-            oldState: old
-        ) { vm, state in
-            vm.cutRanges = state
-            vm.applyLayout()
-        }
-    }
-
-    /// Visible state for the auto-cut button — prevents double-clicks
-    /// while detection is in flight and drives a spinner in the UI.
-    private(set) var isAutoCutting: Bool = false
-
-    /// Published hint: how many cuts the last auto-cut run inserted.
-    /// Nil unless an auto-cut run completed since the editor loaded.
-    /// Cleared when the user manually mutates cuts.
-    private(set) var lastAutoCutCount: Int?
-
-    /// Scan the mic track for interior silences ≥ ~0.8s and insert them
-    /// all as a single undoable batch. Existing cuts are preserved —
-    /// silences are merged into the existing list via `TrimMap`'s
-    /// normaliser, so re-running is idempotent. Quiet stretches where
-    /// the user clicks or types are kept: in a walkthrough that's the
-    /// demo, and cutting it took the clicks (and their zooms) with it.
-    func autoCutSilences() {
-        guard !isAutoCutting else { return }
-        isAutoCutting = true
-        let audioURL = project.bundle.micAudioURL
-        let dur = duration
-        let outerTrim = trimRange
-        let activity = activityTimes
-        Task { [weak self] in
-            let scan = await SilenceAnalyzer.scan(audioURL: audioURL, duration: dur)
-            await MainActor.run {
-                guard let self else { return }
-                defer { self.isAutoCutting = false }
-                guard let scan else {
-                    self.lastAutoCutCount = 0
-                    return
-                }
-                // Only consider silences strictly inside the user's
-                // current outer trim — detections outside are either
-                // already covered by the outer trim or irrelevant.
-                let silences = scan.interiorSilences.filter { sil in
-                    CMTimeCompare(sil.start, outerTrim.start) >= 0 &&
-                    CMTimeCompare(sil.end,   outerTrim.end)   <= 0
-                }
-                let candidates = SilenceAnalyzer.sparing(silences, activity: activity)
-                // Merge with existing cuts via the TrimMap normaliser
-                // (sorts, clamps, merges overlaps). Skip the operation
-                // if nothing new would be added.
-                let existing = self.cutRanges
-                let merged = TrimMap(outerTrim: outerTrim, cuts: existing + candidates).cuts
-                guard merged != existing else {
-                    self.lastAutoCutCount = 0
-                    return
-                }
-                let old = existing
-                self.cutRanges = merged
-                self.applyLayout()
-                self.lastAutoCutCount = merged.count - existing.count
-                self.registerUndoableSnapshot(
-                    "Auto-cut Silences",
-                    capture: { $0.cutRanges },
-                    oldState: old
-                ) { vm, state in
-                    vm.cutRanges = state
-                    vm.applyLayout()
-                }
-                PepperDebug.log("AUTOCUT: inserted \(merged.count - existing.count) silence cuts (\(candidates.count) candidates, \(existing.count) pre-existing)")
-            }
-        }
-    }
-
-    /// Re-run silence detection on the mic track and apply the detected
-    /// trim. Useful if the user hit "Reset" and now wants the auto-trim
-    /// back, or just wants to re-compute after moving files around.
-    func autoTrimSilence() {
-        let audioURL = project.bundle.micAudioURL
-        let dur = duration
-        let activity = activityTimes
-        Task { [weak self] in
-            guard let speech = await SilenceAnalyzer.detectContentRange(
-                audioURL: audioURL,
-                duration: dur
-            ) else { return }
-            let detected = SilenceAnalyzer.widening(speech, toKeep: activity, duration: dur)
-            await MainActor.run {
-                guard let self else { return }
-                let oldStart = self.trimStart
-                let oldEnd = self.trimEnd
-                self.trimStart = detected.start
-                self.trimEnd   = detected.end
-                self.applyLayout()
-                self.registerUndoableSnapshot(
-                    "Auto-Trim Silence",
-                    capture: { vm in (vm.trimStart, vm.trimEnd) },
-                    oldState: (oldStart, oldEnd)
-                ) { vm, state in
-                    vm.trimStart = state.0
-                    vm.trimEnd = state.1
-                    vm.applyLayout()
-                }
-            }
-        }
-    }
-
-    // MARK: - Captions
-
-    /// Transcribe the mic track on-device via `CaptionTranscriber`,
-    /// persist to `transcription.json`, and push into the compositor.
-    /// Called by the inspector's "Generate captions" button. Runs async
-    /// and can take a while — `isTranscribing` drives the spinner; a
-    /// failure populates `transcriptionError` for the UI to surface.
-    /// Kick off captions generation. `allowCloudFallback` lets the
-    /// transcriber drop the `requiresOnDeviceRecognition` flag as a
-    /// last resort — macOS 26 has been observed to return empty
-    /// placeholder results from the on-device URL-request path even
-    /// when Dictation works locally. Cloud mode sends audio to Apple
-    /// for that single request only; the user opts in via the UI.
-    ///
-    /// `mayAskForPermission` only matters where captions need Speech
-    /// Recognition (macOS 14/15): pass true from a button whose note
-    /// says macOS will ask (`CaptionTranscriber.willAskForPermission`).
-    /// `finish` gets the line count or the error, on the main actor.
-    func generateCaptions(
-        allowCloudFallback: Bool = false,
-        mayAskForPermission: Bool = false,
-        then finish: ((Result<Int, Error>) -> Void)? = nil
-    ) {
-        guard !isTranscribing else { return }
-        isTranscribing = true
-        transcriptionError = nil
-        let audioURL = project.bundle.micAudioURL
-        Task { [weak self] in
-            do {
-                let log = try await CaptionTranscriber.transcribe(
-                    audioURL: audioURL,
-                    allowCloudFallback: allowCloudFallback,
-                    mayAskForPermission: mayAskForPermission
-                )
-                await MainActor.run {
-                    guard let self else { return }
-                    self.transcription = log
-                    self.isTranscribing = false
-                    self.saveNow(.transcription)
-                    self.applyLayout()
-                    finish?(.success(log.lines.count))
-                }
-            } catch {
-                await MainActor.run {
-                    guard let self else { return }
-                    self.isTranscribing = false
-                    self.transcriptionError = error
-                    PepperDebug.log("CAPTIONS: generate failed: \(error.localizedDescription)")
-                    finish?(.failure(error))
-                }
-            }
-        }
-    }
-
-    /// Remove the persisted transcription + clear the in-memory copy.
-    /// Used by the inspector's "Clear" button.
-    func clearCaptions() {
-        transcription = nil
-        try? FileManager.default.removeItem(at: project.bundle.transcriptionURL)
-        applyLayout()
-    }
-
-    // MARK: - Caption line editing
-
-    /// Replace the text of a single caption line. Writes the file back
-    /// and registers an undo step keyed on the line id so multiple
-    /// keystrokes within the coalesce window collapse into one entry
-    /// (feels like a normal text-edit undo instead of one-per-keystroke).
-    func updateCaptionLineText(id: UUID, to newText: String) {
-        guard var log = transcription,
-              let idx = log.lines.firstIndex(where: { $0.id == id }) else { return }
-        let oldLine = log.lines[idx]
-        guard oldLine.text != newText else { return }
-        log.lines[idx].text = newText
-        transcription = log
-        persistTranscription()
-        applyLayout()
-        let capturedID = id
-        registerUndoableSnapshot(
-            "Edit Caption",
-            coalesceKey: "caption-text-\(capturedID.uuidString)",
-            capture: { vm -> String in
-                vm.transcription?.lines.first(where: { $0.id == capturedID })?.text ?? ""
-            },
-            oldState: oldLine.text
-        ) { vm, state in
-            guard var log = vm.transcription,
-                  let i = log.lines.firstIndex(where: { $0.id == capturedID }) else { return }
-            log.lines[i].text = state
-            vm.transcription = log
-            vm.persistTranscription()
-            vm.applyLayout()
-        }
-    }
-
-    /// Adjust the start/end seconds of a caption line. Both values are
-    /// clamped so start < end with a minimum 100ms length (anything
-    /// shorter flashes too briefly to read).
-    func updateCaptionLineTiming(id: UUID, start: TimeInterval, end: TimeInterval) {
-        guard var log = transcription,
-              let idx = log.lines.firstIndex(where: { $0.id == id }) else { return }
-        let minLen: TimeInterval = 0.1
-        let clampedStart = max(0, start)
-        let clampedEnd = max(clampedStart + minLen, end)
-        let oldLine = log.lines[idx]
-        guard oldLine.startSeconds != clampedStart || oldLine.endSeconds != clampedEnd else { return }
-        log.lines[idx].startSeconds = clampedStart
-        log.lines[idx].endSeconds = clampedEnd
-        transcription = log
-        persistTranscription()
-        applyLayout()
-        let capturedID = id
-        let oldPair = (oldLine.startSeconds, oldLine.endSeconds)
-        registerUndoableSnapshot(
-            "Adjust Caption Timing",
-            coalesceKey: "caption-timing-\(capturedID.uuidString)",
-            capture: { vm -> (TimeInterval, TimeInterval) in
-                if let l = vm.transcription?.lines.first(where: { $0.id == capturedID }) {
-                    return (l.startSeconds, l.endSeconds)
-                }
-                return (0, 0)
-            },
-            oldState: oldPair
-        ) { vm, state in
-            guard var log = vm.transcription,
-                  let i = log.lines.firstIndex(where: { $0.id == capturedID }) else { return }
-            log.lines[i].startSeconds = state.0
-            log.lines[i].endSeconds = state.1
-            vm.transcription = log
-            vm.persistTranscription()
-            vm.applyLayout()
-        }
-    }
-
-    /// Remove a single caption line. Undoable; the full pre-delete
-    /// `lines` array is snapshotted so restore preserves order.
-    func deleteCaptionLine(id: UUID) {
-        guard var log = transcription,
-              let idx = log.lines.firstIndex(where: { $0.id == id }) else { return }
-        let preDelete = log.lines
-        log.lines.remove(at: idx)
-        transcription = log
-        persistTranscription()
-        applyLayout()
-        registerUndoableSnapshot(
-            "Delete Caption",
-            capture: { vm -> [TranscriptionLine] in vm.transcription?.lines ?? [] },
-            oldState: preDelete
-        ) { vm, state in
-            guard var l = vm.transcription else { return }
-            l.lines = state
-            vm.transcription = l
-            vm.persistTranscription()
-            vm.applyLayout()
-        }
-    }
-
-    private func persistTranscription() { scheduleSave(.transcription) }
-
     /// Currently-selected trim range, or the full duration when the user
     /// hasn't narrowed it.
     var trimRange: CMTimeRange {
         CMTimeRange(start: trimStart, end: trimEnd)
     }
 
-    private func clamp(_ t: CMTime, lower: CMTime, upper: CMTime) -> CMTime {
+    func clamp(_ t: CMTime, lower: CMTime, upper: CMTime) -> CMTime {
         if CMTimeCompare(t, lower) < 0 { return lower }
         if CMTimeCompare(t, upper) > 0 { return upper }
         return t
@@ -1614,7 +1010,7 @@ final class EditorViewModel {
         )
     }
 
-    private func applyLayout() {
+    func applyLayout() {
         // An export renders from a snapshot of these values in its own
         // composition, so the preview isn't needed for correctness — but
         // it's held still mid-export so it keeps showing what's being
@@ -1629,536 +1025,5 @@ final class EditorViewModel {
             observedCutRanges = cutRanges
         }
         forceRedraw()
-    }
-
-    // MARK: - Keyframe edits (talking head + zoom)
-
-    /// Apply an edited keyframe list: preview, save, and register undo.
-    /// With a `coalesceKey`, rapid repeats (a pill or slider drag)
-    /// collapse into one undo step back to the pre-drag list. `seekTo`
-    /// moves the playhead before the preview refreshes.
-    private func commitKeyframes<K: RampKeyframe>(
-        _ keyPath: ReferenceWritableKeyPath<EditorViewModel, [K]>,
-        _ updated: [K],
-        saving file: SidecarFile,
-        actionName: String,
-        coalesceKey: AnyHashable? = nil,
-        seekTo: CMTime? = nil
-    ) {
-        let old = self[keyPath: keyPath]
-        self[keyPath: keyPath] = updated
-        if let seekTo { seek(to: seekTo) }
-        applyLayout()
-        scheduleSave(file)
-        registerUndoableSnapshot(
-            actionName,
-            coalesceKey: coalesceKey,
-            capture: { $0[keyPath: keyPath] },
-            oldState: old
-        ) { vm, state in
-            vm[keyPath: keyPath] = state
-            vm.applyLayout()
-            vm.scheduleSave(file)
-        }
-    }
-
-    // MARK: - Talking-head keyframes
-
-    /// Default parameters for a new talking-head keyframe.
-    static let defaultTalkingHeadHold = CMTime(seconds: 3.0, preferredTimescale: 600)
-    static let talkingHeadInOut = CMTime(seconds: 0.5, preferredTimescale: 600)
-
-    /// Where "Add at playhead" would put a talking-head moment: the first
-    /// gap after the playhead that fits at least a minimum-hold keyframe,
-    /// capped at the default length.
-    private func nextTalkingHeadSlot() -> (start: CMTime, maxTotalDuration: CMTime)? {
-        let ramps = CMTimeMultiply(Self.talkingHeadInOut, multiplier: 2)
-        return RampKeyframes.nextSlot(
-            in: talkingHeadKeyframes,
-            from: currentTime,
-            duration: duration,
-            minTotal: CMTimeAdd(ramps, RampKeyframes.minHold),
-            defaultTotal: CMTimeAdd(ramps, Self.defaultTalkingHeadHold)
-        )
-    }
-
-    var canAddTalkingHeadAtPlayhead: Bool {
-        nextTalkingHeadSlot() != nil
-    }
-
-    func addTalkingHeadAtPlayhead() {
-        guard let slot = nextTalkingHeadSlot() else { return }
-        let kf = TalkingHeadKeyframe(
-            startTime: slot.start,
-            inDuration: Self.talkingHeadInOut,
-            holdEndTime: RampKeyframes.holdEnd(start: slot.start, total: slot.maxTotalDuration, inOut: Self.talkingHeadInOut),
-            outDuration: Self.talkingHeadInOut
-        )
-        // Move the playhead to the new keyframe so the user gets a
-        // preview and the "Add" button auto-advances again on next click.
-        commitKeyframes(\.talkingHeadKeyframes, RampKeyframes.sorted(talkingHeadKeyframes + [kf]),
-                        saving: .talkingHead, actionName: "Add Talking Head", seekTo: slot.start)
-    }
-
-    func removeTalkingHeadKeyframe(id: UUID) {
-        commitKeyframes(\.talkingHeadKeyframes, talkingHeadKeyframes.filter { $0.id != id },
-                        saving: .talkingHead, actionName: "Remove Talking Head")
-    }
-
-    /// Move a talking-head keyframe so it starts at `newStart`, keeping its
-    /// length and staying clear of its neighbours.
-    func moveTalkingHeadKeyframe(id: UUID, to newStart: CMTime) {
-        guard let moved = RampKeyframes.moving(talkingHeadKeyframes, id: id, to: newStart, duration: duration) else { return }
-        commitKeyframes(\.talkingHeadKeyframes, moved, saving: .talkingHead,
-                        actionName: "Move Talking Head", coalesceKey: "thMove:\(id.uuidString)")
-    }
-
-    /// Change a keyframe's hold (start and ramps unchanged), clamped so it
-    /// can't run into the next keyframe or past the end.
-    func setTalkingHeadHold(id: UUID, hold: CMTime) {
-        guard let updated = RampKeyframes.settingHold(talkingHeadKeyframes, id: id, hold: hold, duration: duration) else { return }
-        commitKeyframes(\.talkingHeadKeyframes, updated, saving: .talkingHead,
-                        actionName: "Change Talking-Head Hold", coalesceKey: "thHold:\(id.uuidString)")
-    }
-
-    /// Update a keyframe's target diameter fraction (0.2 … 0.95).
-    func setTalkingHeadDiameterFraction(id: UUID, fraction: CGFloat) {
-        guard let idx = talkingHeadKeyframes.firstIndex(where: { $0.id == id }) else { return }
-        let clamped = max(0.2, min(0.95, fraction))
-        guard clamped != talkingHeadKeyframes[idx].targetDiameterFraction else { return }
-        var updated = talkingHeadKeyframes
-        updated[idx].targetDiameterFraction = clamped
-        commitKeyframes(\.talkingHeadKeyframes, updated, saving: .talkingHead,
-                        actionName: "Change Talking-Head Size", coalesceKey: "thSize:\(id.uuidString)")
-    }
-
-    // MARK: - Zoom-keyframe editing
-
-    /// Default timing for a manually added zoom — matches what the
-    /// auto-generator uses so manual adds feel consistent alongside the
-    /// auto ones. The peak scale comes from `zoomTuning`.
-    static let defaultZoomInOut = CMTime(seconds: 0.5, preferredTimescale: 600)
-    static let defaultZoomHold = CMTime(seconds: 1.5, preferredTimescale: 600)
-
-    /// Zoom's equivalent of `nextTalkingHeadSlot`.
-    private func nextZoomSlot() -> (start: CMTime, maxTotalDuration: CMTime)? {
-        let ramps = CMTimeMultiply(Self.defaultZoomInOut, multiplier: 2)
-        return RampKeyframes.nextSlot(
-            in: zoomKeyframes,
-            from: currentTime,
-            duration: duration,
-            minTotal: CMTimeAdd(ramps, RampKeyframes.minHold),
-            defaultTotal: CMTimeAdd(ramps, Self.defaultZoomHold)
-        )
-    }
-
-    var canAddZoomAtPlayhead: Bool {
-        nextZoomSlot() != nil
-    }
-
-    /// Add a manual zoom keyframe at (or just after) the playhead,
-    /// targeting the centre of the canvas; "Set focus" retargets it.
-    func addZoomAtPlayhead() {
-        guard let slot = nextZoomSlot() else { return }
-        let kf = ZoomKeyframe(
-            startTime: slot.start,
-            inDuration: Self.defaultZoomInOut,
-            holdEndTime: RampKeyframes.holdEnd(start: slot.start, total: slot.maxTotalDuration, inOut: Self.defaultZoomInOut),
-            outDuration: Self.defaultZoomInOut,
-            target: CGPoint(x: outputSize.width / 2, y: outputSize.height / 2),
-            scale: zoomTuning.scale
-        )
-        commitKeyframes(\.zoomKeyframes, RampKeyframes.sorted(zoomKeyframes + [kf]),
-                        saving: .zoom, actionName: "Add Zoom", seekTo: slot.start)
-    }
-
-    func removeZoomKeyframe(id: UUID) {
-        if selectedZoomID == id { selectedZoomID = nil }
-        commitKeyframes(\.zoomKeyframes, zoomKeyframes.filter { $0.id != id },
-                        saving: .zoom, actionName: "Remove Zoom")
-    }
-
-    /// Inspector "How close": one peak scale for every zoom, and for
-    /// zooms added or regenerated later. One undo step (per drag).
-    func setScaleForAllZooms(_ scale: CGFloat) {
-        let clamped = max(1.0, min(2.5, scale))
-        var tuning = zoomTuning
-        tuning.scale = clamped
-        zoomTuning = tuning
-        let updated = zoomKeyframes.map { kf -> ZoomKeyframe in
-            var k = kf
-            k.scale = clamped
-            return k
-        }
-        guard updated != zoomKeyframes else { return }
-        commitKeyframes(\.zoomKeyframes, updated, saving: .zoom,
-                        actionName: "Change Zoom Closeness", coalesceKey: "zoomScaleAll")
-    }
-
-    /// Inspector "How long it stays zoomed". Shifts every zoom's hold by
-    /// the change rather than setting one length: an auto zoom's hold
-    /// spans its whole cluster of clicks plus this trailing time, so a
-    /// flat value would cut long clusters short.
-    func setHoldForAllZooms(_ seconds: TimeInterval) {
-        let delta = seconds - zoomTuning.holdSeconds
-        guard delta != 0 else { return }
-        var tuning = zoomTuning
-        tuning.holdSeconds = seconds
-        zoomTuning = tuning
-        var updated = zoomKeyframes
-        for kf in zoomKeyframes {
-            guard let current = updated.first(where: { $0.id == kf.id }) else { continue }
-            let hold = CMTimeGetSeconds(CMTimeSubtract(current.holdEndTime, CMTimeAdd(current.startTime, current.inDuration)))
-            let target = CMTime(seconds: hold + delta, preferredTimescale: 600)
-            if let next = RampKeyframes.settingHold(updated, id: kf.id, hold: target, duration: duration) {
-                updated = next
-            }
-        }
-        guard updated != zoomKeyframes else { return }
-        commitKeyframes(\.zoomKeyframes, updated, saving: .zoom,
-                        actionName: "Change Zoom Length", coalesceKey: "zoomHoldAll")
-    }
-
-    /// Inspector: one size for every full-screen (talking-head) moment.
-    func setSizeForAllTalkingHeads(_ fraction: CGFloat) {
-        let clamped = max(0.2, min(0.95, fraction))
-        let updated = talkingHeadKeyframes.map { kf -> TalkingHeadKeyframe in
-            var k = kf
-            k.targetDiameterFraction = clamped
-            return k
-        }
-        guard updated != talkingHeadKeyframes else { return }
-        commitKeyframes(\.talkingHeadKeyframes, updated, saving: .talkingHead,
-                        actionName: "Change Full-Screen Size", coalesceKey: "thSizeAll")
-    }
-
-    /// One line of the Quick polish card's report.
-    struct PolishStep: Equatable {
-        enum Kind { case working, done, nothing, problem }
-        var kind: Kind
-        var text: String
-    }
-
-    /// What the last "Polish my video" did. Worded in the past tense so
-    /// it stays true after later edits. Nil until it runs, or once the
-    /// user closes it.
-    struct PolishReport: Equatable {
-        var zooms: PolishStep
-        var captions: PolishStep
-        var isWorking: Bool { zooms.kind == .working || captions.kind == .working }
-    }
-
-    private(set) var polishReport: PolishReport?
-
-    /// True while "Polish my video" still has work running.
-    var isPolishing: Bool { polishReport?.isWorking ?? false }
-
-    /// Polish can't start while captions are already being written.
-    var canPolish: Bool { !isTranscribing && !isLoading && loadError == nil }
-
-    func dismissPolishReport() {
-        polishReport = nil
-    }
-
-    /// Inspector "Polish my video": zooms on the clicks and captions,
-    /// the two things most walkthroughs want. Cutting pauses is left to
-    /// the Cuts row: it removes footage, which one button shouldn't do
-    /// unasked. Each part is its own undo step, running it again keeps
-    /// what's there, and the card reports what happened, including
-    /// when there was nothing to do (a short clip with no clicks or
-    /// speech used to look like a dead button).
-    func quickPolish() {
-        guard canPolish else { return }
-        let zoomWasOn = zoomEnabled
-        zoomEnabled = true
-        let zooms: PolishStep
-        if !zoomKeyframes.isEmpty {
-            // Usually the case: zooms are made when the recording opens.
-            zooms = zoomWasOn
-                ? PolishStep(kind: .done, text: "\(Self.count(zoomKeyframes.count, "zoom")) already follow your clicks")
-                : PolishStep(kind: .done, text: "Turned on \(Self.count(zoomKeyframes.count, "zoom")) on your clicks")
-        } else if loggedClickCount == 0 {
-            zooms = PolishStep(kind: .nothing, text: "No clicks to zoom into")
-        } else {
-            regenerateZoomFromClicks()
-            zooms = zoomKeyframes.isEmpty
-                ? PolishStep(kind: .nothing, text: "No clicks inside the recorded area")
-                : PolishStep(kind: .done, text: "Added \(Self.count(zoomKeyframes.count, "zoom")) on your clicks")
-        }
-
-        let captionsWereOn = captionStyle.enabled
-        if !captionsWereOn {
-            var style = captionStyle
-            style.enabled = true
-            captionStyle = style
-        }
-        guard transcription == nil else {
-            let text = captionsWereOn ? "Captions were already on" : "Turned your captions back on"
-            polishReport = PolishReport(zooms: zooms, captions: PolishStep(kind: .done, text: text))
-            return
-        }
-        polishReport = PolishReport(zooms: zooms, captions: PolishStep(kind: .working, text: "Writing captions…"))
-        // The card says so beforehand when macOS will ask for Speech
-        // Recognition, so the prompt isn't a surprise.
-        generateCaptions(mayAskForPermission: true) { [weak self] result in
-            guard let self else { return }
-            let step: PolishStep
-            switch result {
-            case .success(let lines):
-                step = PolishStep(kind: .done, text: "Wrote \(Self.count(lines, "caption line"))")
-            case .failure(CaptionTranscriber.TranscriberError.noSpeechDetected):
-                step = PolishStep(kind: .nothing, text: "No speech to caption")
-            case .failure:
-                step = PolishStep(kind: .problem, text: "Couldn't write captions")
-                // The Captions row says why and what to do.
-                self.openInspectorFeature = .captions
-            }
-            self.polishReport?.captions = step
-        }
-    }
-
-    private static func count(_ n: Int, _ noun: String) -> String {
-        "\(n) \(noun)\(n == 1 ? "" : "s")"
-    }
-
-    /// Move a zoom keyframe so it starts at `newStart`, keeping its length
-    /// and staying clear of its neighbours. Called by the timeline pill.
-    func moveZoomKeyframe(id: UUID, to newStart: CMTime) {
-        guard let moved = RampKeyframes.moving(zoomKeyframes, id: id, to: newStart, duration: duration) else { return }
-        commitKeyframes(\.zoomKeyframes, moved, saving: .zoom,
-                        actionName: "Move Zoom", coalesceKey: "zoomMove:\(id.uuidString)")
-    }
-
-    /// Change a keyframe's hold, clamped against the next keyframe's start.
-    func setZoomKeyframeHold(id: UUID, hold: CMTime) {
-        guard let updated = RampKeyframes.settingHold(zoomKeyframes, id: id, hold: hold, duration: duration) else { return }
-        commitKeyframes(\.zoomKeyframes, updated, saving: .zoom,
-                        actionName: "Change Zoom Hold", coalesceKey: "zoomHold:\(id.uuidString)")
-    }
-
-    /// Update a keyframe's peak scale (1.0 … 2.5).
-    func setZoomKeyframeScale(id: UUID, scale: CGFloat) {
-        guard let idx = zoomKeyframes.firstIndex(where: { $0.id == id }) else { return }
-        let clamped = max(1.0, min(2.5, scale))
-        guard clamped != zoomKeyframes[idx].scale else { return }
-        var updated = zoomKeyframes
-        updated[idx].scale = clamped
-        commitKeyframes(\.zoomKeyframes, updated, saving: .zoom,
-                        actionName: "Change Zoom Scale", coalesceKey: "zoomScale:\(id.uuidString)")
-    }
-
-    /// Enter "click to place focus" mode for this keyframe. The editor
-    /// preview grows a transparent hit-catcher; the next click inside
-    /// the preview rect is routed to `setZoomTarget`. Also seeks the
-    /// playhead to the keyframe's peak so the user sees the image at
-    /// the zoomed-in moment they're retargeting.
-    func beginPlacingZoomTarget(id: UUID) {
-        guard let kf = zoomKeyframes.first(where: { $0.id == id }) else { return }
-        zoomTargetBeingPlaced = id
-        seek(to: kf.peakStartTime)
-    }
-
-    /// Cancel focus-placement mode without updating the keyframe.
-    /// Wired to both the ESC key and an explicit "Cancel" in the banner.
-    func cancelPlacingZoomTarget() {
-        zoomTargetBeingPlaced = nil
-    }
-
-    /// Apply a user-picked focus point (already converted into
-    /// image-pixel coords, bottom-left origin — that's what
-    /// `ZoomKeyframe.target` uses and what the compositor consumes).
-    func setZoomTarget(id: UUID, imagePixel: CGPoint) {
-        guard let idx = zoomKeyframes.firstIndex(where: { $0.id == id }) else { return }
-        var updated = zoomKeyframes
-        updated[idx].target = imagePixel
-        zoomTargetBeingPlaced = nil
-        commitKeyframes(\.zoomKeyframes, updated, saving: .zoom, actionName: "Set Zoom Focus")
-    }
-
-    /// Replace the keyframes with a fresh run of the generator over the
-    /// click log, using the current `zoomTuning`. The user asked for it
-    /// explicitly, and it's undoable.
-    func regenerateZoomFromClicks() {
-        let generated = ZoomKeyframeGenerator.generate(
-            from: project.eventLog,
-            metadata: project.metadata,
-            duration: duration,
-            config: zoomTuning.config()
-        )
-        commitKeyframes(\.zoomKeyframes, generated, saving: .zoom, actionName: "Regenerate Zoom")
-    }
-
-    /// Force the AVPlayer to re-run the compositor. Seeking to the CURRENT
-    /// time is a no-op (AVPlayer short-circuits), so we nudge by one time
-    /// unit to invalidate the cached frame.
-    private func forceRedraw() {
-        guard let item = player.currentItem, item.status == .readyToPlay else { return }
-        let time = player.currentTime()
-        guard time.isValid, !time.isIndefinite else { return }
-
-        let nudge = CMTime(value: 1, timescale: 600)
-        let forward = CMTimeAdd(time, nudge)
-        let duration = item.duration
-
-        let target: CMTime
-        if duration.isValid, !duration.isIndefinite, CMTimeCompare(forward, duration) < 0 {
-            target = forward
-        } else if CMTimeCompare(time, nudge) > 0 {
-            target = CMTimeSubtract(time, nudge)
-        } else {
-            target = time
-        }
-        player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
-    }
-
-    // MARK: - Export
-
-    /// Suggested default filename for the save panel.
-    var suggestedExportFilename: String {
-        let trimmed = !(trimStart == .zero && trimEnd == duration)
-        return trimmed
-            ? "\(project.displayName)_edited-trim.mp4"
-            : "\(project.displayName)_edited.mp4"
-    }
-
-    /// Suggested starting directory for the save panel — same folder the
-    /// original bundle lives in.
-    var suggestedExportDirectory: URL {
-        project.bundleURL.deletingLastPathComponent()
-    }
-
-    /// Build the `ExportLayout` that reflects the editor's current
-    /// inspector values. Shared between the local-file export path
-    /// and third-party destinations (Orbis) so both encode exactly
-    /// what the user sees in the preview.
-    /// The overlay as the editor currently has it — the single source
-    /// for both the live preview (`applyLayout`) and exports
-    /// (`currentExportLayout`), so the two can't drift apart.
-    func currentOverlay() -> OverlaySettings {
-        OverlaySettings(
-            position: webcamPosition,
-            shape: webcamShape,
-            diameter: webcamDiameter,
-            inset: webcamInset,
-            webcamCustomOrigin: webcamCustomOrigin,
-            webcamTransitions: webcamTransitions,
-            webcamBackgroundStyle: webcamBackgroundStyle,
-            zoomKeyframes: zoomEnabled ? zoomKeyframes : [],
-            talkingHeadKeyframes: talkingHeadKeyframes,
-            startCard: startCard,
-            endCard: endCard,
-            cursorRipples: cursorRipplesEnabled ? cursorRipples : [],
-            cursorRippleStyle: .default,
-            transcriptionLines: transcription?.lines ?? [],
-            captionStyle: captionStyle,
-            keystrokeChips: keystrokeOverlayStyle.enabled ? keystrokeChips : [],
-            keystrokeOverlayStyle: keystrokeOverlayStyle,
-            cursorTrack: cursorHighlightStyle.enabled ? cursorTrack : .empty,
-            cursorHighlightStyle: cursorHighlightStyle
-        )
-    }
-
-    func currentExportLayout() -> FinalRenderer.ExportLayout {
-        FinalRenderer.ExportLayout(
-            overlay: currentOverlay(),
-            videoBitrate: exportQuality.bitrate,
-            audioMixVolumes: audioMixVolumes,
-            micOverrideURL: effectiveMicOverrideURL(),
-            writeSRTSidecar: exportSRTSidecar
-        )
-    }
-
-    /// Current editor trim range as a `TrimMap`, returning nil when
-    /// the trim is trivial (no-op). Matches what `startExport` feeds
-    /// to `FinalRenderer.render`.
-    func currentExportTrimMap() -> TrimMap? {
-        trimMap.isTrivial(fullDuration: duration) ? nil : trimMap
-    }
-
-    /// Kick off an async export with the editor's current inspector values
-    /// and trim range. Does nothing if an export is already in flight.
-    func startExport(to outputURL: URL) {
-        guard !isExporting else { return }
-
-        // Pause preview — the player item + the renderer both read the
-        // same raw source files; pausing avoids resource contention.
-        player.pause()
-
-        let layout = currentExportLayout()
-        let bundle = project.bundle
-        let metadata = project.metadata
-        let exportMap: TrimMap? = currentExportTrimMap()
-
-        isExporting = true
-        exportProgress = 0
-        exportError = nil
-
-        exportTask = Task { [weak self] in
-            do {
-                let url = try await FinalRenderer.render(
-                    bundle: bundle,
-                    metadata: metadata,
-                    layout: layout,
-                    trimMap: exportMap,
-                    outputURL: outputURL
-                ) { fraction in
-                    Task { @MainActor in
-                        self?.exportProgress = fraction
-                    }
-                }
-                await MainActor.run {
-                    guard let self else { return }
-                    self.isExporting = false
-                    self.exportProgress = 1.0
-                    NSWorkspace.shared.activateFileViewerSelecting([url])
-                    self.applyLayout()
-                }
-            } catch is CancellationError {
-                await self?.finishExport(error: FinalRenderer.RenderError.cancelled)
-            } catch {
-                await self?.finishExport(error: error)
-            }
-        }
-    }
-
-    func cancelExport() {
-        exportTask?.cancel()
-    }
-
-    /// File-menu commands the view carries out: it owns the save panel
-    /// and the Orbis sheet. Cleared once taken.
-    enum MenuCommand { case export, sendToOrbis }
-    var pendingMenuCommand: MenuCommand?
-
-    /// Export and Send to Orbis can start (the toolbar buttons' rule).
-    var canStartExport: Bool {
-        !isExporting && !isLoading && loadError == nil && !(activeOrbisExport?.isActive ?? false)
-    }
-
-    /// The Orbis sheet owns its controller's lifetime; this weak link
-    /// just lets app-level quit handling find an in-flight upload.
-    @ObservationIgnored weak var activeOrbisExport: OrbisExportController?
-
-    /// Local export or Orbis render/upload currently running.
-    var hasActiveExport: Bool {
-        isExporting || (activeOrbisExport?.isActive ?? false)
-    }
-
-    /// Cancel every export this editor started and wait for them to
-    /// unwind (the renderer deletes its partial MP4 on cancel).
-    func cancelActiveExportsAndWait() async {
-        let running = exportTask
-        running?.cancel()
-        await activeOrbisExport?.cancelAndWait()
-        await running?.value
-    }
-
-    private func finishExport(error: any Error) async {
-        await MainActor.run {
-            self.isExporting = false
-            self.exportError = error
-            self.exportProgress = 0
-            self.applyLayout()
-        }
     }
 }

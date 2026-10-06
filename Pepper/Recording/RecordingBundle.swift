@@ -115,4 +115,49 @@ extension RecordingBundle {
         let mp4 = url.deletingPathExtension().appendingPathExtension("mp4")
         return FileManager.default.fileExists(atPath: mp4.path) ? mp4 : nil
     }
+
+    /// `name` made safe as a file name: no path separators or colons, no
+    /// leading dot (a hidden file), trimmed. Empty when nothing is left.
+    static func fileSafeName(_ name: String) -> String {
+        var clean = name.replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        while clean.hasPrefix(".") { clean.removeFirst() }
+        return String(clean.prefix(200))
+    }
+
+    /// Rename a recording's bundle and, if there is one, its video, so the
+    /// two stay paired. A name already in use gets " 2", " 3"… Nothing
+    /// inside a bundle refers to its own name, and moving keeps the
+    /// creation date the main window sorts by. Returns the new bundle.
+    static func rename(_ url: URL, to name: String) throws -> URL {
+        let fm = FileManager.default
+        let folder = url.deletingLastPathComponent()
+        let base = fileSafeName(name)
+        let current = url.deletingPathExtension().lastPathComponent
+        func taken(_ stem: String) -> Bool {
+            stem != current && (fm.fileExists(atPath: folder.appendingPathComponent("\(stem).\(fileExtension)").path)
+                || fm.fileExists(atPath: folder.appendingPathComponent("\(stem).mp4").path))
+        }
+        var stem = base
+        var n = 2
+        while taken(stem) {
+            stem = "\(base) \(n)"
+            n += 1
+        }
+        guard stem != current else { return url }
+        let video = videoFile(of: url)
+        let renamed = folder.appendingPathComponent("\(stem).\(fileExtension)", isDirectory: true)
+        try fm.moveItem(at: url, to: renamed)
+        if let video {
+            do {
+                try fm.moveItem(at: video, to: folder.appendingPathComponent("\(stem).mp4"))
+            } catch {
+                // Keep the pair together: put the bundle back.
+                try? fm.moveItem(at: renamed, to: url)
+                throw error
+            }
+        }
+        return renamed
+    }
 }

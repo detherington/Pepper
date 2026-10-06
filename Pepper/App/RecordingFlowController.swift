@@ -299,6 +299,8 @@ final class RecordingFlowController {
             // showed a folder of raw tracks while the video was still
             // minutes from existing.
             self.onRecordingSaved?(finished.bundle.sidecarURL)
+            // The as-recorded MP4 is opt-in (Settings › Recording).
+            guard Settings.shared.saveVideoAfterRecording else { return }
             self.menuBar.setFinalizing(true)
             let bundleURL = finished.bundle.sidecarURL.standardizedFileURL
             self.renderingBundles.insert(bundleURL)

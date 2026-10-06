@@ -19,8 +19,12 @@ final class HomeWindowController: NSObject, NSWindowDelegate {
         var showOpenPanel: () -> Void
         var showSettings: () -> Void
         var revealRecordings: () -> Void
+        /// Recording aids that used to be reachable only from the menu bar.
+        var toggleTeleprompter: () -> Void
+        var showSoundboard: () -> Void
         /// A recent recording's right-click menu.
         var reveal: (URL) -> Void
+        var rename: (URL) -> Void
         var trash: (URL) -> Void
     }
 
@@ -34,6 +38,12 @@ final class HomeWindowController: NSObject, NSWindowDelegate {
 
     init(actions: Actions) {
         self.actions = actions
+        super.init()
+        // The teleprompter can be shown or hidden from the menu bar too,
+        // and devices and the record shortcut change in Settings.
+        NotificationCenter.default.addObserver(forName: Settings.didChange, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.model.refresh() }
+        }
     }
 
     func show() {
@@ -112,7 +122,8 @@ extension HomeWindowController {
         let dir = URL(fileURLWithPath: path, isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let noop = Actions(record: {}, open: { _ in }, showOpenPanel: {}, showSettings: {}, revealRecordings: {},
-                           reveal: { _ in }, trash: { _ in })
+                           toggleTeleprompter: {}, showSoundboard: {},
+                           reveal: { _ in }, rename: { _ in }, trash: { _ in })
         let controller = HomeWindowController(actions: noop)
         controller.show()
         // Thumbnails load in the background.

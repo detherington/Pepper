@@ -98,6 +98,8 @@ final class Settings {
         static let hideMenuBarIconWhenRecording = "hideMenuBarIconWhenRecording"
         /// Menu bar only: no Dock icon except while an editor or setup is open.
         static let hideDockIcon = "hideDockIcon"
+        /// Render an as-recorded MP4 beside each recording when it stops.
+        static let saveVideoAfterRecording = "saveVideoAfterRecording"
         static let showWebcamPreview = "showWebcamPreview"
         static let cameraDeviceID = "cameraDeviceID"
         static let microphoneDeviceID = "microphoneDeviceID"
@@ -170,6 +172,11 @@ final class Settings {
             Key.countdownSeconds: 3,
             Key.hideMenuBarIconWhenRecording: false,
             Key.hideDockIcon: false,
+            // Off: the editor opens when a recording stops, and videos go
+            // out through Export or Send to Orbis. The automatic MP4 was
+            // most of the recordings folder's size and a render of several
+            // minutes competing with the editor.
+            Key.saveVideoAfterRecording: false,
             Key.showWebcamPreview: true,
             Key.editorSmartZoomEnabled: true,
             Key.editorCursorRipplesEnabled: true,
@@ -254,6 +261,11 @@ final class Settings {
     var hideDockIcon: Bool {
         get { defaults.bool(forKey: Key.hideDockIcon) }
         set { defaults.set(newValue, forKey: Key.hideDockIcon); post() }
+    }
+
+    var saveVideoAfterRecording: Bool {
+        get { defaults.bool(forKey: Key.saveVideoAfterRecording) }
+        set { defaults.set(newValue, forKey: Key.saveVideoAfterRecording); post() }
     }
 
     var showWebcamPreview: Bool {
