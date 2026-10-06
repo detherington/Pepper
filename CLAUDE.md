@@ -26,7 +26,7 @@ Requires macOS 26 (everyone at SBS is on 26 or later); Sparkle only
 offers updates to Macs that meet the minimum.
 
 Single-maintainer project; ship cadence is "whenever a feature's ready."
-Version is `MARKETING_VERSION` in `project.yml` — currently 1.3.1. The
+Version is `MARKETING_VERSION` in `project.yml` — currently 1.4.0. The
 build number (`CURRENT_PROJECT_VERSION`) is a UTC `YYYYMMDDHHMM`
 timestamp set by the release script.
 
@@ -58,7 +58,7 @@ only happens during `scripts/release.sh`.
 `PepperTests` (Swift Testing, hosted in Pepper.app, which skips its own
 startup when XCTest launches it) covers the pure logic: trim rounding,
 pause cutting around clicks, `FriendlyError` wording, recording names and
-renames. Add a test with any change there; `scripts/release.sh` runs them
+renames, captions' Replace all, Export's time-left wording. Add a test with any change there; `scripts/release.sh` runs them
 before building. Capture, compositing and UI are still checked by hand
 and with the review hooks below ("smoke-test a recording, confirm the
 export renders and the editor opens it").
@@ -180,7 +180,12 @@ the same time base the editor uses for seeking. Don't mix wall-clock
 | `Pepper/Capture/` | `CaptureCoordinator`, `PauseClock`, `ScreenCapture` (SCStream), `CameraCapture` (AVCaptureSession), `CaptureContention` (detect Granola/Wispr/etc holding the mic), `SampleBufferRetiming` |
 | `Pepper/Recording/` | `TrackWriter` (one writer for all four raw tracks), `EventRecorder`, `CursorSampler`, `RecordingBundle` layout, `TeleprompterController` |
 | `Pepper/Soundboard/` | Soundboard engine + cues + hotkey binding |
-| `Pepper/Editor/` | `RecordingProject`, `EditorComposition`, `LiveCompositor`, `OverlaySettings` (the one value both preview and export render from), `EditorViewModel` (state and setup; behaviour by area in `EditorViewModel+Playback/+Trim/+Captions/+Keyframes/+Audio/+Export`, so some state has internal setters for those files), `EditState` + `SidecarStore` (per-recording edits, debounced saves), keyframe models + `RampKeyframe` (shared zoom/talking-head editing rules), `SilenceAnalyzer`, `SourceCoordinateMapper`, `TrimMap`; `EditorView` (window toolbar: details, Send to Orbis, Export) with `Inspector/` (`EditorInspector`: plain-language feature rows with switches, one open at a time via `vm.openInspectorFeature`, plus Quick polish; timeline/preview clicks open the matching row), `Timeline/`, `ExportSheet` (+ the save panel's Quality accessory) |
+| `Pepper/Editor/` | `RecordingProject`, `EditorComposition`, `LiveCompositor`, `OverlaySettings` (the one value both preview and export render from), `EditorViewModel` (state and setup; behaviour by area in `EditorViewModel+Playback/+Trim/+Captions/+Keyframes/+Audio/+Export`, so some state has internal setters for those files), `EditState` + `SidecarStore` (per-recording edits, debounced saves), keyframe models + `RampKeyframe` (shared zoom/talking-head editing rules), `SilenceAnalyzer`, `SourceCoordinateMapper`, `TrimMap`; `EditorView` (window toolbar: details, Send to Orbis, Export; the preview has no
+AVPlayerView controls: a click plays or pauses, the timeline is the one transport, and its
+full-screen button opens `FullScreenPreview` on the same player; Shift-drag on the timeline
+selects a part to cut, alongside Mark/Cut; the timeline zooms (View menu, header buttons, pinch)
+by drawing its lanes wider in a sideways scroll view, so lane code just gets a bigger `width`;
+the controls drop their names for icons when the bar is narrow) with `Inspector/` (`EditorInspector`: plain-language feature rows with switches, one open at a time via `vm.openInspectorFeature`, plus Quick polish; timeline/preview clicks open the matching row), `Timeline/`, `ExportSheet` (+ the save panel's Quality accessory) |
 | `Pepper/Rendering/` | `FinalRenderer` (reader → compositor → writer), `ExportQuality`, `SRTFormatter` |
 | `Pepper/Orbis/` | "Export to Orbis": `OrbisAccount` (connection owner — OAuth 2.1 PKCE + loopback sign-in as client `pepper-mac`, scope `videos`, same flow as Muesli; refresh/revoke), `OAuthLoopbackServer`, `OrbisClient` (REST; asks `OrbisAccount` for a credential per request), `OrbisExportController` (FinalRenderer → presigned R2 PUT → ingest-assets), `OrbisExportSheet`, `OrbisSendWindowController` (Send to Orbis from the main window's right-click menu: loads the recording headless with its saved edits and shows the same form in its own window; its uploads count for quit), `OrbisKeychain` (refresh token keyed per host, never UserDefaults), `OrbisSettings` (host + last-used form values). No custom URL scheme — an old token-delivery link was a token-injection hole |
 | `Pepper/UI/` | `Home/` (main window: `HomeWindowController` — hides while a recording starts, back if it's cancelled — `HomeModel`, `HomeView`, in the setup/sign-in page look; Teleprompter and Soundboard buttons; a recent recording's right-click menu opens, reveals, renames or trashes it, never while it's rendering or exporting); `FriendlyError` (+ `FriendlyErrorView`); SwiftUI/AppKit windows (Settings, Soundboard, SourcePicker, RegionSelector, Countdown, RecordingBorder, WebcamPreview, Teleprompter, VideoReadyNotice — Pepper's own card, not a system notification, so no permission prompt); `Onboarding/` (setup walkthrough, modelled on Muesli's); `Brand` (SBS tokens shared with Muesli: colorsets, cobalt `AccentColor` app-wide, Nantes font in `Resources/Fonts`, Neon/Quiet button styles, `brandCard`/`brandKicker`/`brandTimecode`). The editor follows Muesli's rules: native toolbar/forms/menus/sheets; ground strips (timeline, inspector) carrying surface cards; one Neon CTA (Quick polish); Persimmon = live/playhead, Violet = automatic (zooms), Emerald = you (full-screen moments), Teal = caption blocks. Recording indicators (the border, the menu-bar record icon) stay system red on purpose: red is universally "recording" |
@@ -223,7 +228,9 @@ the same time base the editor uses for seeking. Don't mix wall-clock
   and un-granted); `-pepper.debug.renderEditor <dir>
   -pepper.debug.renderEditorBundle <recording.pepper>` writes the editor
   window with each inspector row open (editor size and position are
-  remembered, the render resizes to 1280×860); add `-pepper.debug.renderPolish
+  remembered, the render resizes to 1280×860, or `-pepper.debug.renderEditorSize
+  1040x680`; `-pepper.debug.renderEditorZoom <factor>` adds `editor-zoomed.png`
+  with the playhead mid-recording); add `-pepper.debug.renderPolish
   YES` to also run Quick polish and render its report (it writes zooms
   and captions into the bundle, so point it at a copy). The video area
   renders black. `-pepper.debug.renderReadyNotice <dir>` writes the
@@ -251,9 +258,9 @@ reason.
 `LSUIElement: true`, and menu-bar only when the Dock icon is hidden. That means:
 - **No main menu bar** unless we install one manually —
   `MainMenu.build()` handles Cmd+Cut/Copy/Paste/Quit/Hide, Check for Updates, Settings (⌘,),
-  Open Recording (⌘O) and editor Undo/Redo (their own actions, not
-  `undo:`) so standard keyboard shortcuts work when an editor window is
-  focused.
+  Open Recording (⌘O), editor Undo/Redo (their own actions, not
+  `undo:`) and View › timeline zoom (⌘+ / ⌘− / ⌘0) so standard keyboard
+  shortcuts work when an editor window is focused.
 - **Menu bar key equivalents only fire when Pepper is frontmost.** Any
   shortcut that should work globally (record toggle, pause/resume) must
   be registered as a Carbon global hotkey via `GlobalHotkey`. If you add
@@ -296,8 +303,11 @@ Same model as Muesli (`~/Muesli/scripts/release.sh`, docs/DEPLOYMENT.md §7).
      inside-out signing (Sparkle helpers keep their own entitlements);
    - notarize + staple the app (profile `Picsy`, or
      `PEPPER_NOTARY_PROFILE`), zip it with `ditto --sequesterRsrc`, build
-     `dist/installer/Pepper-X.Y.Z.dmg` from the stapled app, notarize +
-     staple that;
+     `dist/installer/Pepper-X.Y.Z.dmg` from the stapled app with
+     `dmgbuild` (`pip3 install --user dmgbuild`; checked up front) in
+     Muesli's installer look (`scripts/dmg/settings.py`, background from
+     `swift scripts/render-dmg-background.swift`; LZMA, volume "Pepper
+     X.Y.Z"), notarize + staple that;
    - `generate_appcast --account ed25519` over `dist/` (refuses if the
      Keychain key doesn't match `SUPublicEDKey`), then stages
      `dist/upload-X.Y.Z/` (appcast, zip, DMG, new deltas), tags, pushes.

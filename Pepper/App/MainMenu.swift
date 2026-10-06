@@ -7,9 +7,9 @@ import AppKit
 /// screen whenever one of our windows is focused.
 ///
 /// Check for Updates, Settings (⌘,) and Open Recording (⌘O) go to
-/// `AppDelegate`; Export (⌘E), Send to Orbis (⇧⌘E), Undo and Redo to the
-/// key editor (`EditorWindowController`), with `AppDelegate` disabling
-/// them when no editor is key. They use their own actions, not `undo:`/`redo:`, so
+/// `AppDelegate`; Export (⌘E), Send to Orbis (⇧⌘E), Undo, Redo and the
+/// View menu's timeline zoom to the key editor (`EditorWindowController`),
+/// with `AppDelegate` disabling them when no editor is key. They use their own actions, not `undo:`/`redo:`, so
 /// they drive the editor's undo stack rather than a focused text field's.
 @MainActor
 enum MainMenu {
@@ -96,6 +96,29 @@ enum MainMenu {
         editMenu.addItem(withTitle: "Select All",
                          action: #selector(NSText.selectAll(_:)),
                          keyEquivalent: "a")
+
+        // View menu — the key editor's timeline zoom.
+        let viewItem = NSMenuItem()
+        main.addItem(viewItem)
+        let viewMenu = NSMenu(title: "View")
+        viewItem.submenu = viewMenu
+        viewMenu.addItem(withTitle: "Zoom In",
+                         action: #selector(EditorWindowController.zoomTimelineIn(_:)),
+                         keyEquivalent: "+")
+        // ⌘= as well: "+" is shifted on most layouts, and ⌘= is what
+        // people press for zoom in. Hidden, so the menu lists it once.
+        let zoomInUnshifted = NSMenuItem(title: "Zoom In",
+                                         action: #selector(EditorWindowController.zoomTimelineIn(_:)),
+                                         keyEquivalent: "=")
+        zoomInUnshifted.isHidden = true
+        zoomInUnshifted.allowsKeyEquivalentWhenHidden = true
+        viewMenu.addItem(zoomInUnshifted)
+        viewMenu.addItem(withTitle: "Zoom Out",
+                         action: #selector(EditorWindowController.zoomTimelineOut(_:)),
+                         keyEquivalent: "-")
+        viewMenu.addItem(withTitle: "Fit Whole Recording",
+                         action: #selector(EditorWindowController.fitTimeline(_:)),
+                         keyEquivalent: "0")
 
         // Window menu — Close / Minimize. `NSApp.windowsMenu` lets
         // AppKit auto-populate it with the app's live window list.

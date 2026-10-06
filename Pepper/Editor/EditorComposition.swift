@@ -198,6 +198,9 @@ enum EditorComposition {
     static func makePlayerItem(from result: Result) -> AVPlayerItem {
         let item = AVPlayerItem(asset: result.composition)
         item.videoComposition = result.videoComposition
+        // Speech-friendly time stretching, so the editor's 1.5× and 2×
+        // keep voices at their own pitch and clear.
+        item.audioTimePitchAlgorithm = .timeDomain
         return item
     }
 

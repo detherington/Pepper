@@ -63,6 +63,7 @@ struct CutsFeature: View {
         Divider()
 
         RowHeading("Cut or trim by hand")
-        Note("To cut a part: move to where it starts and press Mark (⇧I) in the timeline controls, move to where it ends, then press Cut (⇧O). To trim the start or end, drag the handles at either end of the timeline.")
+        Note("To cut a part, hold Shift and drag across it on the timeline, then press Delete. Or press Mark (⇧I) where it starts, move to where it ends and press Cut (⇧O). To trim the start or end, drag the handles at either end of the timeline.")
+        Note("To put a cut back, point at it on the timeline and click its arrow.")
     }
 }

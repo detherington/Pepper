@@ -130,11 +130,26 @@ extension EditorViewModel {
     /// scrubbing extends the selection to that new playhead position.
     func markSelectionStart() {
         selectionStart = currentTime
+        selectionEnd = nil
+    }
+
+    /// A selection with both ends fixed: Shift-dragging on the timeline.
+    func selectRange(from start: CMTime, to end: CMTime) {
+        selectionStart = start
+        selectionEnd = end
+    }
+
+    /// A plain click or drag on the timeline drops a Shift-dragged
+    /// selection, as clicking away does elsewhere. A Mark stays: moving
+    /// the playhead is how its selection gets its other end.
+    func clearDraggedSelection() {
+        if selectionEnd != nil { clearSelection() }
     }
 
     /// Drop the in-progress selection without cutting.
     func clearSelection() {
         selectionStart = nil
+        selectionEnd = nil
     }
 
     /// If a selection is active, convert it into a cut and clear the
@@ -142,7 +157,7 @@ extension EditorViewModel {
     func cutSelection() {
         guard let range = selectionRange else { return }
         insertCut(range)
-        selectionStart = nil
+        clearSelection()
     }
 
     /// Wipe all interior cuts (keeps outer trim intact).

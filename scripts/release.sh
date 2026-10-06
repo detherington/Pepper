@@ -45,10 +45,6 @@ SPARKLE_ACCOUNT="ed25519"
 ENTITLEMENTS="Pepper/Resources/Pepper.entitlements"
 INFO_PLIST_SRC="Pepper/Resources/Info.plist"
 DIST="dist"
-VOLUME_NAME="Pepper Installer"
-ICON_SIZE=128
-WINDOW_WIDTH=660
-WINDOW_HEIGHT=440
 
 MODE="release"
 ALLOW_DIRTY=false
@@ -114,20 +110,6 @@ if [ "$MODE" = "verify" ]; then
     exit 0
 fi
 
-# Tidy up whatever a failed run leaves behind — most importantly a still-
-# mounted installer volume, which would confuse the Finder layout step on
-# the next run.
-MOUNT_DIR=""
-STAGING_DIR="$DIST/.dmg-staging"
-DMG_TEMP="$DIST/.${APP_NAME}-temp.dmg"
-cleanup() {
-    if [ -n "$MOUNT_DIR" ] && [ -d "$MOUNT_DIR" ]; then
-        hdiutil detach "$MOUNT_DIR" -force -quiet || true
-    fi
-    rm -rf "$STAGING_DIR" "$DMG_TEMP"
-}
-trap cleanup EXIT
-
 # ---- Regenerate project from project.yml ----
 # project.yml is the source of truth for Info.plist values (feed URL,
 # public key, versions). Building without regenerating uses whatever the
@@ -186,6 +168,10 @@ if ! $ALLOW_DIRTY; then
     git fetch --quiet origin main || fail "couldn't fetch origin/main."
     [ "$(git rev-list --count HEAD..origin/main)" = "0" ] || fail "origin/main has commits this checkout doesn't — pull first."
 fi
+# The installer window needs dmgbuild (as Muesli's does).
+DMGBUILD=$(command -v dmgbuild || ls "$HOME"/Library/Python/*/bin/dmgbuild 2>/dev/null | head -1 || true)
+[ -n "$DMGBUILD" ] || fail "dmgbuild not found: pip3 install --user dmgbuild"
+[ -f scripts/dmg/background.png ] || fail "scripts/dmg/background.png is missing: swift scripts/render-dmg-background.swift"
 echo "Checks passed."
 if [ "$MODE" = "check" ]; then exit 0; fi
 
@@ -316,66 +302,12 @@ zip_app   # again, now with the ticket stapled inside
 # extraction step to lose Sparkle.framework's symlinks — so the download
 # page links this, never the zip.
 echo "=== Building ${DMG_NAME} ==="
-rm -rf "$STAGING_DIR" "$DMG_TEMP" "$DMG"
-mkdir -p "$STAGING_DIR"
-ditto "$BUILT_APP" "$STAGING_DIR/${APP_NAME}.app"
-ln -s /Applications "$STAGING_DIR/Applications"
-# A volume left mounted by an earlier failed run would make Finder's
-# `disk "$VOLUME_NAME"` below ambiguous.
-if [ -d "/Volumes/$VOLUME_NAME" ]; then
-    hdiutil detach "/Volumes/$VOLUME_NAME" -force -quiet || true
-fi
-hdiutil create -srcfolder "$STAGING_DIR" \
-    -volname "$VOLUME_NAME" \
-    -fs HFS+ \
-    -fsargs "-c c=64,a=16,e=16" \
-    -format UDRW \
-    -size 200m \
-    "$DMG_TEMP" >/dev/null
-MOUNT_DIR=$(hdiutil attach -readwrite -noverify "$DMG_TEMP" | grep "/Volumes/" | sed 's/.*\/Volumes/\/Volumes/')
-
-# Lay out: app on the left, Applications symlink on the right. Finder does
-# it from the sizes above. When Finder can't be scripted — processes
-# started by some apps get "Application isn't running" for every Apple
-# Event — the layout saved from a good build is copied in instead: same
-# volume name and item names, so it applies as is. If the layout above
-# changes, refresh scripts/dmg/DS_Store from a mounted image.
-if ! osascript <<APPLESCRIPT
-tell application "Finder"
-    tell disk "$VOLUME_NAME"
-        open
-        set current view of container window to icon view
-        set toolbar visible of container window to false
-        set statusbar visible of container window to false
-
-        set the bounds of container window to {100, 100, $((100 + WINDOW_WIDTH)), $((100 + WINDOW_HEIGHT))}
-
-        set theViewOptions to the icon view options of container window
-        set arrangement of theViewOptions to not arranged
-        set icon size of theViewOptions to $ICON_SIZE
-
-        set position of item "${APP_NAME}.app" of container window to {165, 200}
-        set position of item "Applications" of container window to {495, 200}
-
-        close
-        open
-        update without registering applications
-        delay 2
-        close
-    end tell
-end tell
-APPLESCRIPT
-then
-    echo "warning: Finder couldn't lay out the disk image; using scripts/dmg/DS_Store."
-    cp scripts/dmg/DS_Store "$MOUNT_DIR/.DS_Store"
-fi
-
-sync
-hdiutil detach "$MOUNT_DIR" -quiet
-MOUNT_DIR=""
-hdiutil convert "$DMG_TEMP" -format UDZO -imagekey zlib-level=9 -o "$DMG" >/dev/null
-rm -f "$DMG_TEMP"
-rm -rf "$STAGING_DIR"
+# Muesli's installer window (scripts/dmg/settings.py and the background from
+# scripts/render-dmg-background.swift), written by dmgbuild straight into the
+# image's .DS_Store. This used to script Finder, which failed whenever
+# Finder couldn't be scripted from the shell running the release.
+rm -f "$DMG"
+"$DMGBUILD" -s scripts/dmg/settings.py -D app="$BUILT_APP" "${APP_NAME} ${VERSION}" "$DMG" >/dev/null
 codesign --force --sign "$SIGN_IDENTITY" --timestamp "$DMG"
 echo "=== Notarizing the disk image ==="
 notarize "$DMG"

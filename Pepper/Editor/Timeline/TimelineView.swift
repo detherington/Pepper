@@ -1,5 +1,6 @@
 import SwiftUI
 import AVFoundation
+import AppKit
 
 /// The parts of the editor that depend on the playhead, each its own
 /// view. `currentTime` changes ~30×/s during playback, and SwiftUI
@@ -64,55 +65,131 @@ struct CutSelectionButton: View {
         }
         .keyboardShortcut("o", modifiers: .shift)
         .disabled(viewModel.selectionRange == nil)
-        .help("Delete selected range (⇧O) — ripples timeline + keyframes")
+        .help("Cut the selected part (Delete or ⇧O); the rest of the video closes up")
+    }
+}
+
+/// Keeps the playhead in view on a zoomed timeline. Playing carries it
+/// off the right edge, so the view pages along with it; a jump elsewhere
+/// (a step key, a click in the inspector) brings it to the middle.
+/// Leaves it be while you drag on the track, and after you scroll away
+/// with the playhead still. Its own view because it reads `currentTime`
+/// (see `PlayheadTimeLabel`).
+struct PlayheadFollower: View {
+    let viewModel: EditorViewModel
+    let width: CGFloat
+    let viewport: CGFloat
+    let scrollX: CGFloat
+    let isScrubbing: Bool
+    let scrollTo: (CGFloat) -> Void
+
+    var body: some View {
+        Color.clear
+            .onChange(of: viewModel.currentTime) { _, time in
+                guard width > viewport + 1, !isScrubbing else { return }
+                let x = TimelineMath.x(for: time, duration: viewModel.duration, width: width)
+                let margin: CGFloat = 24
+                let target: CGFloat
+                if viewModel.isPlaying {
+                    guard x < scrollX || x > scrollX + viewport - margin else { return }
+                    target = x - margin
+                } else {
+                    guard x < scrollX || x > scrollX + viewport else { return }
+                    target = x - viewport / 2
+                }
+                scrollTo(max(0, min(width - viewport, target)))
+            }
+    }
+}
+
+/// Where the pointer is on the main track, for `HoverTimeReadout`. A
+/// class held in `@State`, so a pointer move re-renders only the
+/// readout: `TimelineView` itself never reads `x`.
+@Observable
+final class TimelineHover {
+    var x: CGFloat?
+}
+
+/// A hairline and the time under the pointer on the main track, to see
+/// where a click will land before making it.
+struct HoverTimeReadout: View {
+    let hover: TimelineHover
+    let viewModel: EditorViewModel
+    let width: CGFloat
+    let trackHeight: CGFloat
+
+    var body: some View {
+        if let x = hover.x, width > 0 {
+            let label: CGFloat = 52
+            ZStack(alignment: .topLeading) {
+                Rectangle()
+                    .fill(Color.primary.opacity(0.55))
+                    .frame(width: 1, height: trackHeight)
+                    .offset(x: x)
+                Text(TimelineMath.timeString(TimelineMath.time(atX: x, duration: viewModel.duration, width: width)))
+                    .font(.system(size: 9.5, weight: .medium).monospacedDigit())
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(.regularMaterial, in: Capsule())
+                    .fixedSize()
+                    // Right of the line, or left of it near the end.
+                    .offset(x: x + 4 + label > width ? x - 4 - label : x + 4, y: 2)
+            }
+            .frame(width: width, height: trackHeight, alignment: .topLeading)
+            .allowsHitTesting(false)
+        }
     }
 }
 
 struct TimelineView: View {
     @Bindable var viewModel: EditorViewModel
 
-    private let trackHeight: CGFloat = 40
+    static let mainTrackHeight: CGFloat = 40
+    private let trackHeight: CGFloat = TimelineView.mainTrackHeight
     private let handleWidth: CGFloat = 12
+    /// Room above and below the lanes for the playhead's overhang and
+    /// the trim handles' shadows, which the scroll view would clip.
+    private static let laneInset: CGFloat = 3
+    /// The main track's own space, so the scrub gesture reads the same
+    /// x whether it starts on the track or on a cut.
+    private static let trackSpace = "pepper.timeline.track"
+
+    /// Whether the drag in progress selects (Shift held when it began)
+    /// or just moves the playhead. Nil between drags.
+    @State private var scrubSelecting: Bool?
+    /// The cut under the pointer, which shows its Put Back button.
+    @State private var hoveredCut: Int?
+    /// The controls bar is too narrow for its buttons' names.
+    @State private var compactControls = false
+    @State private var hover = TimelineHover()
+
+    // Zoom: the lanes scroll sideways when zoomed in.
+    @State private var scrollPosition = ScrollPosition()
+    /// How far the lanes are scrolled, as the scroll view reports it.
+    @State private var scrollX: CGFloat = 0
+    /// A pinch in progress: the zoom it started from, and the time under
+    /// the fingers, kept there as it zooms.
+    @State private var pinch: (zoom: CGFloat, time: CMTime, screenX: CGFloat)?
+
+    /// The lanes' height: the track, each visible lane and the gaps, and
+    /// a scroll bar under a zoomed timeline where scroll bars take room
+    /// (a mouse attached, or Show scroll bars set to Always). EditorView
+    /// sizes the timeline strip from it.
+    static func lanesHeight(_ vm: EditorViewModel) -> CGFloat {
+        var h = mainTrackHeight + laneInset * 2
+        for lane in TimelineLane.allCases where vm.isTimelineLaneVisible(lane) {
+            h += (lane == .zoom ? 18 : 14) + 6
+        }
+        if vm.timelineZoom > 1, NSScroller.preferredScrollerStyle == .legacy {
+            h += NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy)
+        }
+        return h
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             header
-
-            GeometryReader { geo in
-                track(width: geo.size.width)
-            }
-            .frame(height: trackHeight)
-
-            // Secondary lanes — each one is conditional on the
-            // viewModel's effective visibility rule (user override +
-            // "has data" fallback). Hiding removes the row from the
-            // stack so the bottom controls lift up, no empty stripes.
-            if viewModel.isTimelineLaneVisible(.zoom) {
-                GeometryReader { geo in zoomLane(width: geo.size.width) }
-                    .frame(height: 18)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-            if viewModel.isTimelineLaneVisible(.talkingHead) {
-                GeometryReader { geo in talkingHeadLane(width: geo.size.width) }
-                    .frame(height: 14)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-            if viewModel.isTimelineLaneVisible(.soundboard) {
-                GeometryReader { geo in cueLane(width: geo.size.width) }
-                    .frame(height: 14)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-            if viewModel.isTimelineLaneVisible(.captions) {
-                GeometryReader { geo in captionsLane(width: geo.size.width) }
-                    .frame(height: 14)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-            if viewModel.isTimelineLaneVisible(.keystrokes) {
-                GeometryReader { geo in keystrokesLane(width: geo.size.width) }
-                    .frame(height: 14)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-
+            lanes
             controls
         }
         .animation(
@@ -125,6 +202,131 @@ struct TimelineView: View {
                 viewModel.isTimelineLaneVisible(.keystrokes)
             ]
         )
+    }
+
+    // MARK: Lanes and zoom
+
+    /// The track and its lanes, as wide as the zoom makes them, in a
+    /// sideways scroll view; the header and controls stay put. At zoom 1
+    /// that's exactly the window's width, as before zoom existed. Every
+    /// lane maps time across the full `width`, so none of them needed
+    /// to know about zooming.
+    private var lanes: some View {
+        GeometryReader { geo in
+            let viewport = geo.size.width
+            let width = viewport * viewModel.timelineZoom
+            ScrollView(.horizontal) {
+                VStack(alignment: .leading, spacing: 6) {
+                    track(width: width)
+                        .frame(width: width, height: trackHeight)
+
+                    // Secondary lanes — each one is conditional on the
+                    // viewModel's effective visibility rule (user override +
+                    // "has data" fallback). Hiding removes the row from the
+                    // stack so the bottom controls lift up, no empty stripes.
+                    if viewModel.isTimelineLaneVisible(.zoom) {
+                        zoomLane(width: width)
+                            .frame(width: width, height: 18)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+                    if viewModel.isTimelineLaneVisible(.talkingHead) {
+                        talkingHeadLane(width: width)
+                            .frame(width: width, height: 14)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+                    if viewModel.isTimelineLaneVisible(.soundboard) {
+                        cueLane(width: width)
+                            .frame(width: width, height: 14)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+                    if viewModel.isTimelineLaneVisible(.captions) {
+                        captionsLane(width: width)
+                            .frame(width: width, height: 14)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+                    if viewModel.isTimelineLaneVisible(.keystrokes) {
+                        keystrokesLane(width: width)
+                            .frame(width: width, height: 14)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+                }
+                .padding(.vertical, Self.laneInset)
+            }
+            .scrollIndicators(viewModel.timelineZoom > 1 ? .visible : .hidden)
+            .scrollPosition($scrollPosition)
+            .onScrollGeometryChange(for: CGFloat.self, of: { $0.contentOffset.x }) { _, x in
+                scrollX = x
+            }
+            .background {
+                PlayheadFollower(viewModel: viewModel, width: width, viewport: viewport,
+                                 scrollX: scrollX, isScrubbing: scrubSelecting != nil) { x in
+                    scrollPosition.scrollTo(x: x)
+                }
+            }
+            .simultaneousGesture(pinchGesture(viewport: viewport))
+            .onChange(of: viewModel.timelineZoom) { old, new in
+                keepPlaceWhileZooming(from: old, to: new, viewport: viewport)
+            }
+        }
+        .frame(height: Self.lanesHeight(viewModel))
+    }
+
+    /// Pinch on the timeline to zoom, around the point between your
+    /// fingers.
+    private func pinchGesture(viewport: CGFloat) -> some Gesture {
+        MagnifyGesture()
+            .onChanged { value in
+                if pinch == nil {
+                    let x = value.startLocation.x
+                    let width = viewport * viewModel.timelineZoom
+                    pinch = (viewModel.timelineZoom, timeForX(scrollX + x, width: width), x)
+                }
+                if let pinch {
+                    viewModel.setTimelineZoom(pinch.zoom * value.magnification)
+                }
+            }
+            .onEnded { _ in pinch = nil }
+    }
+
+    /// Zooming keeps your place: the time under a pinch stays under it;
+    /// otherwise the playhead stays where it is on screen, or, when it's
+    /// out of view, whatever is in the middle stays in the middle.
+    private func keepPlaceWhileZooming(from old: CGFloat, to new: CGFloat, viewport: CGFloat) {
+        let oldWidth = viewport * old
+        let newWidth = viewport * new
+        let anchor: (time: CMTime, screenX: CGFloat)
+        if let pinch {
+            anchor = (pinch.time, pinch.screenX)
+        } else {
+            let playheadX = xForTime(viewModel.currentTime, width: oldWidth) - scrollX
+            anchor = (0...viewport).contains(playheadX)
+                ? (viewModel.currentTime, playheadX)
+                : (timeForX(scrollX + viewport / 2, width: oldWidth), viewport / 2)
+        }
+        let target = max(0, min(newWidth - viewport, xForTime(anchor.time, width: newWidth) - anchor.screenX))
+        // Next turn, once the new width has laid out: the scroll view
+        // would clamp the offset to the old one.
+        DispatchQueue.main.async { scrollPosition.scrollTo(x: target) }
+    }
+
+    private var zoomButtons: some View {
+        HStack(spacing: 0) {
+            Button {
+                viewModel.zoomTimelineOut()
+            } label: {
+                Image(systemName: "minus.magnifyingglass")
+            }
+            .disabled(viewModel.timelineZoom <= 1)
+            .help("Zoom out (⌘−). ⌘0 fits the whole recording.")
+            Button {
+                viewModel.zoomTimelineIn()
+            } label: {
+                Image(systemName: "plus.magnifyingglass")
+            }
+            .disabled(viewModel.timelineZoom >= viewModel.maxTimelineZoom)
+            .help("Zoom in (⌘+), or pinch on the timeline")
+        }
+        .buttonStyle(.borderless)
     }
 
     // MARK: Keystroke lane
@@ -271,15 +473,22 @@ struct TimelineView: View {
         HStack {
             PlayheadTimeLabel(viewModel: viewModel)
             Spacer()
-            Text(trimSummary)
+            // What will be exported: the trim less every cut. It used to
+            // read "00:03.2 → 01:45.0 (101.8s)", the trim alone, so a
+            // video with cuts looked longer than it was.
+            Text("Final video \(InspectorFormat.time(viewModel.trimMap.outputDuration))")
                 .brandTimecode(10.5, weight: .regular)
                 .foregroundStyle(.secondary)
+                .help("How long the video will be, after trimming and cuts")
             Spacer()
             Text(timeString(viewModel.duration))
                 .brandTimecode(11)
                 .foregroundStyle(.secondary)
-            laneVisibilityMenu
+                .help("The whole recording")
+            zoomButtons
                 .padding(.leading, 6)
+            laneVisibilityMenu
+                .padding(.leading, 2)
         }
     }
 
@@ -375,7 +584,8 @@ struct TimelineView: View {
 
             // Interior cuts — rendered as dark hatched regions so they
             // read as "not in the output". Drawn ABOVE the active-trim
-            // highlight but BELOW the seek layer + handles.
+            // highlight but BELOW the seek layer + handles; their clicks
+            // land on the cut layer above the seek layer.
             ForEach(Array(viewModel.cutRanges.enumerated()), id: \.offset) { _, cut in
                 let a = xForTime(cut.start, width: width)
                 let b = xForTime(cut.end, width: width)
@@ -411,13 +621,48 @@ struct TimelineView: View {
             // Click/drag-to-seek layer (below handles)
             Color.clear
                 .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { value in
-                            let t = timeForX(value.location.x, width: width)
-                            viewModel.seek(to: t)
+                .gesture(scrubGesture(width: width))
+
+            // Each cut, above the seek layer: scrubbing carries on across
+            // it, and pointing at it shows a button to put it back (also
+            // on its right-click menu). Restoring a cut used to mean
+            // finding it in the Cuts list.
+            ForEach(Array(viewModel.cutRanges.enumerated()), id: \.offset) { idx, cut in
+                let a = xForTime(cut.start, width: width)
+                let w = max(0, xForTime(cut.end, width: width) - a)
+                Color.clear
+                    .contentShape(Rectangle())
+                    .frame(width: w, height: trackHeight)
+                    .overlay {
+                        if hoveredCut == idx, w >= 20 {
+                            Button {
+                                hoveredCut = nil
+                                viewModel.removeCut(at: idx)
+                            } label: {
+                                Image(systemName: "arrow.uturn.backward.circle.fill")
+                                    .font(.system(size: 15))
+                                    .symbolRenderingMode(.palette)
+                                    .foregroundStyle(.black, .white)
+                                    .shadow(color: .black.opacity(0.4), radius: 2)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Put this part back in the video")
+                            .accessibilityLabel("Put back the cut at \(InspectorFormat.time(cut.start))")
                         }
-                )
+                    }
+                    .onHover { inside in
+                        if inside { hoveredCut = idx } else if hoveredCut == idx { hoveredCut = nil }
+                    }
+                    .gesture(scrubGesture(width: width))
+                    .contextMenu {
+                        Button("Put Back This Cut") {
+                            hoveredCut = nil
+                            viewModel.removeCut(at: idx)
+                        }
+                    }
+                    .help("\(InspectorFormat.time(cut.start))–\(InspectorFormat.time(cut.end)) is cut from the video. Right-click to put it back.")
+                    .offset(x: a)
+            }
 
             // Left trim handle
             TrimHandle()
@@ -445,7 +690,37 @@ struct TimelineView: View {
 
             // Playhead (non-interactive visual)
             PlayheadLine(viewModel: viewModel, width: width, trackHeight: trackHeight)
+
+            HoverTimeReadout(hover: hover, viewModel: viewModel, width: width, trackHeight: trackHeight)
         }
+        .coordinateSpace(.named(Self.trackSpace))
+        .onContinuousHover { phase in
+            switch phase {
+            case .active(let point): hover.x = point.x
+            case .ended:             hover.x = nil
+            }
+        }
+    }
+
+    /// Click or drag to move the playhead. Holding Shift as the drag
+    /// starts selects the part dragged across instead, for Delete or
+    /// Cut, without the Mark-scrub-Cut steps. A plain click drops that
+    /// selection again.
+    private func scrubGesture(width: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .named(Self.trackSpace))
+            .onChanged { value in
+                let t = timeForX(value.location.x, width: width)
+                if scrubSelecting == nil {
+                    let selecting = NSEvent.modifierFlags.contains(.shift)
+                    scrubSelecting = selecting
+                    if !selecting { viewModel.clearDraggedSelection() }
+                }
+                if scrubSelecting == true {
+                    viewModel.selectRange(from: timeForX(value.startLocation.x, width: width), to: t)
+                }
+                viewModel.seek(to: t)
+            }
+            .onEnded { _ in scrubSelecting = nil }
     }
 
     // MARK: Controls
@@ -461,6 +736,25 @@ struct TimelineView: View {
             }
             .keyboardShortcut(.space, modifiers: [])
             .help("Play / Pause (Space)")
+
+            // A button showing the speed, not a pop-up: the bar is short
+            // of room at the editor's default size.
+            Menu {
+                Picker("Speed", selection: $viewModel.playbackRate) {
+                    ForEach(EditorViewModel.playbackRates, id: \.self) { rate in
+                        Text(Self.rateLabel(rate)).tag(rate)
+                    }
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+            } label: {
+                Text(Self.rateLabel(viewModel.playbackRate))
+                    .monospacedDigit()
+            }
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Playback speed, for checking the video. Exports play at normal speed.")
+            .accessibilityLabel("Playback speed")
 
             Divider().frame(height: 16)
 
@@ -498,12 +792,13 @@ struct TimelineView: View {
             .keyboardShortcut("o", modifiers: [])
             .help("Set trim out-point to playhead (O)")
 
+            // Not Undo's arrow, which sits two buttons along.
             Button {
                 viewModel.clearTrim()
             } label: {
-                Label("Reset", systemImage: "arrow.uturn.backward")
+                Label("Reset", systemImage: "arrow.left.and.right")
             }
-            .help("Reset trim to full duration")
+            .help("Reset the trim to the whole recording")
 
             Button {
                 viewModel.autoTrimSilence()
@@ -525,9 +820,24 @@ struct TimelineView: View {
             CutSelectionButton(viewModel: viewModel)
 
             Spacer()
+
+            // The preview has no controls of its own (this bar is the
+            // one transport), so full screen lives here.
+            Button {
+                FullScreenPreview.show(viewModel)
+            } label: {
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+            }
+            .help("Watch the edited video full screen (Esc to come back)")
+            .accessibilityLabel("Watch full screen")
         }
+        .labelStyle(ControlLabelStyle(showsTitle: !compactControls))
         .controlSize(.small)
         .disabled(viewModel.isExporting || viewModel.isLoading)
+        // At the editor's default size the names truncated to "S…" and
+        // "A…"; icons alone, each with its tooltip, read better. The
+        // width is what the named buttons need, measured from a render.
+        .onGeometryChange(for: Bool.self) { $0.size.width < 730 } action: { compactControls = $0 }
     }
 
     // MARK: Helpers
@@ -542,14 +852,6 @@ struct TimelineView: View {
         return name.isEmpty ? "Redo (⌘⇧Z)" : "Redo \(name) (⌘⇧Z)"
     }
 
-    private var trimSummary: String {
-        let start = timeString(viewModel.trimStart)
-        let end = timeString(viewModel.trimEnd)
-        let dur = CMTimeGetSeconds(CMTimeSubtract(viewModel.trimEnd, viewModel.trimStart))
-        let durString = dur.isFinite ? String(format: "%.1fs", dur) : "--"
-        return "\(start) → \(end)  (\(durString))"
-    }
-
     private func timeString(_ t: CMTime) -> String {
         TimelineMath.timeString(t)
     }
@@ -559,14 +861,31 @@ struct TimelineView: View {
     }
 
     private func timeForX(_ x: CGFloat, width: CGFloat) -> CMTime {
-        guard width > 0 else { return .zero }
-        let fraction = Double(max(0, min(width, x)) / width)
-        let total = CMTimeGetSeconds(viewModel.duration)
-        return CMTime(seconds: fraction * total, preferredTimescale: 600)
+        TimelineMath.time(atX: x, duration: viewModel.duration, width: width)
+    }
+
+    /// "1×", "1.25×".
+    private static func rateLabel(_ rate: Float) -> String {
+        rate == rate.rounded() ? "\(Int(rate))×" : String(format: "%g×", rate)
     }
 
     private func clampHandleOffset(_ x: CGFloat, width: CGFloat) -> CGFloat {
         max(0, min(width - handleWidth, x))
+    }
+}
+
+/// The controls' buttons with their names, or icons alone when the bar
+/// is short of room.
+private struct ControlLabelStyle: LabelStyle {
+    let showsTitle: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        if showsTitle {
+            Label(configuration)
+                .labelStyle(.titleAndIcon)
+        } else {
+            configuration.icon
+        }
     }
 }
 

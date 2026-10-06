@@ -502,12 +502,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func showOpenRecordingPanel(_ sender: Any?) { editors.showOpenPanel() }
 
     // Reached only when no editor is key (the key editor handles these
-    // first): disable Undo, Redo, Export and Send to Orbis, and drop the
-    // last editor's action name from Undo and Redo.
+    // first): disable Undo, Redo, Export, Send to Orbis and the timeline
+    // zoom, and drop the last editor's action name from Undo and Redo.
     @objc func undoEditorChange(_ sender: Any?) {}
     @objc func redoEditorChange(_ sender: Any?) {}
     @objc func exportVideo(_ sender: Any?) {}
     @objc func sendToOrbis(_ sender: Any?) {}
+    @objc func zoomTimelineIn(_ sender: Any?) {}
+    @objc func zoomTimelineOut(_ sender: Any?) {}
+    @objc func fitTimeline(_ sender: Any?) {}
 
     // MARK: - Recordings
 
@@ -611,7 +614,8 @@ extension AppDelegate: NSMenuItemValidation {
         case #selector(redoEditorChange(_:)):
             item.title = "Redo"
             return false
-        case #selector(exportVideo(_:)), #selector(sendToOrbis(_:)):
+        case #selector(exportVideo(_:)), #selector(sendToOrbis(_:)),
+             #selector(zoomTimelineIn(_:)), #selector(zoomTimelineOut(_:)), #selector(fitTimeline(_:)):
             return false
         case #selector(checkForUpdates(_:)):
             // Greyed out while a check is already running, as Sparkle's

@@ -18,7 +18,13 @@ extension EditorWindowController {
         let dir = URL(fileURLWithPath: path, isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let controller = EditorWindowController(project: project)
-        controller.window?.setContentSize(NSSize(width: 1280, height: 860))
+        // `-pepper.debug.renderEditorSize <w>x<h>`: another size, e.g. the
+        // editor's default 1040x680.
+        let size = defaults.string(forKey: "pepper.debug.renderEditorSize")?
+            .split(separator: "x").compactMap { Double($0) }
+        controller.window?.setContentSize(size?.count == 2
+            ? NSSize(width: size![0], height: size![1])
+            : NSSize(width: 1280, height: 860))
         switch defaults.string(forKey: "pepper.debug.renderAppearance") {
         case "light": controller.window?.appearance = NSAppearance(named: .aqua)
         case "dark":  controller.window?.appearance = NSAppearance(named: .darkAqua)
@@ -41,6 +47,23 @@ extension EditorWindowController {
             let name = state?.rawValue ?? "closed"
             try? rep.representation(using: .png, properties: [:])?
                 .write(to: dir.appendingPathComponent("editor-\(name).png"))
+        }
+        // `-pepper.debug.renderEditorZoom <factor>`: the timeline zoomed
+        // in, with the playhead moved to the middle of the recording (the
+        // view should follow it there).
+        let zoom = defaults.double(forKey: "pepper.debug.renderEditorZoom")
+        if zoom > 1 {
+            vm.openInspectorFeature = nil
+            vm.setTimelineZoom(CGFloat(zoom))
+            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+            vm.seek(to: CMTimeMultiplyByFloat64(vm.duration, multiplier: 0.5))
+            RunLoop.current.run(until: Date().addingTimeInterval(1.0))
+            if let frameView = controller.window?.contentView?.superview,
+               let rep = frameView.bitmapImageRepForCachingDisplay(in: frameView.bounds) {
+                frameView.cacheDisplay(in: frameView.bounds, to: rep)
+                try? rep.representation(using: .png, properties: [:])?
+                    .write(to: dir.appendingPathComponent("editor-zoomed.png"))
+            }
         }
         // `-pepper.debug.renderExportTo <file.mp4>`: run the editor's own
         // export (its layout and trim, as Export and Send to Orbis do)

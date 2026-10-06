@@ -141,6 +141,25 @@ extension EditorViewModel {
         player.pause()
     }
 
+    // MARK: - Timeline zoom
+
+    /// As far in as it goes: about three seconds across the timeline,
+    /// enough to grab a short zoom or caption. Capped so a long
+    /// recording's lanes stay a sane width to draw.
+    var maxTimelineZoom: CGFloat {
+        let seconds = CMTimeGetSeconds(duration)
+        guard seconds.isFinite, seconds > 0 else { return 1 }
+        return max(1, min(48, CGFloat(seconds / 3)))
+    }
+
+    func setTimelineZoom(_ zoom: CGFloat) {
+        timelineZoom = max(1, min(maxTimelineZoom, zoom))
+    }
+
+    func zoomTimelineIn()  { setTimelineZoom(timelineZoom * 2) }
+    func zoomTimelineOut() { setTimelineZoom(timelineZoom / 2) }
+    func fitTimeline()     { setTimelineZoom(1) }
+
     /// Force the AVPlayer to re-run the compositor. Seeking to the CURRENT
     /// time is a no-op (AVPlayer short-circuits), so we nudge by one time
     /// unit to invalidate the cached frame.

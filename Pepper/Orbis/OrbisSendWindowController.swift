@@ -60,7 +60,7 @@ private struct OrbisSendView: View {
     var body: some View {
         if let error = vm.loadError {
             VStack(alignment: .leading, spacing: 12) {
-                FriendlyErrorView(error: FriendlyError(error))
+                FriendlyErrorView(error: .opening(error))
                 HStack {
                     Spacer()
                     Button("Close", action: close)

@@ -28,6 +28,22 @@ final class EditorViewModel {
     private(set) var duration: CMTime = .zero
     var currentTime: CMTime = .zero
     var isPlaying: Bool = false
+    /// Preview speed, for checking a long recording quickly. Exports
+    /// always run at normal speed. `defaultRate` is what `play()` uses,
+    /// so Space, a click on the preview and full screen all keep it.
+    var playbackRate: Float = 1 {
+        didSet {
+            player.defaultRate = playbackRate
+            if isPlaying { player.rate = playbackRate }
+        }
+    }
+    static let playbackRates: [Float] = [1, 1.25, 1.5, 2]
+
+    /// How far the timeline is zoomed in: 1 fits the whole recording in
+    /// the window, 2 shows half of it, and so on. Not saved; each editor
+    /// opens fitted. Change it through `setTimelineZoom` (+Playback),
+    /// which keeps it in range.
+    var timelineZoom: CGFloat = 1
 
     /// Trim range in composition time. `trimStart` defaults to .zero and
     /// `trimEnd` defaults to the full duration once the composition loads.
@@ -67,10 +83,14 @@ final class EditorViewModel {
     }
 
     /// Anchor for an in-progress range selection. When non-nil, the
-    /// selection runs between this point and `currentTime` (order-
-    /// independent). Used by the cut workflow: user hits "Mark" here,
-    /// scrubs to the other end, hits "Cut".
+    /// selection runs between this point and `selectionEnd`, or
+    /// `currentTime` when that's nil (order-independent). Used by the
+    /// cut workflow: user hits "Mark" here, scrubs to the other end,
+    /// hits "Cut".
     var selectionStart: CMTime?
+    /// The other end of a selection Shift-dragged on the timeline. Nil
+    /// for a Mark, whose selection follows the playhead instead.
+    var selectionEnd: CMTime?
 
     /// ID of the caption line the user most recently targeted via the
     /// timeline's caption lane. Non-nil values (a) expand the inspector
@@ -88,12 +108,13 @@ final class EditorViewModel {
     var selectedZoomID: UUID?
 
     /// Convenience: normalised range from `selectionStart` to
-    /// `currentTime`, or nil if no mark is set. Clamped to the outer
-    /// trim so you can't select into already-trimmed regions.
+    /// `selectionEnd` (or `currentTime`), or nil if no mark is set.
+    /// Clamped to the outer trim so you can't select into already-
+    /// trimmed regions.
     var selectionRange: CMTimeRange? {
         guard let anchor = selectionStart, duration > .zero else { return nil }
         let a = clamp(anchor, lower: trimStart, upper: trimEnd)
-        let b = clamp(currentTime, lower: trimStart, upper: trimEnd)
+        let b = clamp(selectionEnd ?? currentTime, lower: trimStart, upper: trimEnd)
         let lo = CMTimeCompare(a, b) <= 0 ? a : b
         let hi = CMTimeCompare(a, b) <= 0 ? b : a
         guard CMTimeCompare(hi, lo) > 0 else { return nil }
@@ -105,6 +126,11 @@ final class EditorViewModel {
     var exportProgress: Float = 0
     var exportError: (any Error)?
     var exportTask: Task<Void, Never>?
+    /// When the export in progress started, for its time-left estimate.
+    var exportStartedAt: Date?
+    /// The file the last export saved, while its sheet says so (Show in
+    /// Finder, Copy). Nil once that's dismissed.
+    var exportedURL: URL?
 
     /// When non-nil, the preview is in "click to place zoom focus"
     /// mode — the EditorView overlays a hit-catcher that turns the
@@ -822,6 +848,10 @@ final class EditorViewModel {
             }
 
             applyLayout()
+            // Open on the video's first kept frame. Auto-trim usually
+            // moves the In point past 0:00, and the preview used to open
+            // on a frame that isn't in the video.
+            seek(to: trimStart)
             isLoading = false
             PepperDebug.log("EDITOR: zoom keyframes generated: \(self.zoomKeyframes.count)")
 

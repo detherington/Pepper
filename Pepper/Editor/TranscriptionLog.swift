@@ -53,3 +53,45 @@ struct TranscriptionLog: Codable, Equatable, Sendable {
 
     static let empty = TranscriptionLog(version: 1, locale: "en-US", createdAt: Date(), lines: [])
 }
+
+// MARK: - Replace all
+
+extension TranscriptionLog {
+    /// The lines with every whole-word `find` replaced by `replacement`,
+    /// and how many were. For the name the speech engine gets wrong in
+    /// every line ("Orbus" for Orbis): case doesn't matter, and a match
+    /// has to stand alone, so fixing "an" leaves "and" and "plan" be.
+    /// `find` can be several words; the replacement goes in as typed.
+    func replacingWord(_ find: String, with replacement: String) -> (lines: [TranscriptionLine], count: Int) {
+        guard let regex = Self.wordPattern(find) else { return (lines, 0) }
+        let template = NSRegularExpression.escapedTemplate(for: replacement)
+        var total = 0
+        let replaced = lines.map { line -> TranscriptionLine in
+            let range = NSRange(line.text.startIndex..., in: line.text)
+            let n = regex.numberOfMatches(in: line.text, range: range)
+            guard n > 0 else { return line }
+            total += n
+            var next = line
+            next.text = regex.stringByReplacingMatches(in: line.text, range: range, withTemplate: template)
+            return next
+        }
+        return (replaced, total)
+    }
+
+    /// How many times `find` appears as a whole word, for the count
+    /// shown while it's typed.
+    func occurrences(ofWord find: String) -> Int {
+        guard let regex = Self.wordPattern(find) else { return 0 }
+        return lines.reduce(0) { $0 + regex.numberOfMatches(in: $1.text, range: NSRange($1.text.startIndex..., in: $1.text)) }
+    }
+
+    /// Not `\b`: that needs a letter at each end, and a name like "C++"
+    /// ends in punctuation. Here a match just can't touch another
+    /// letter or digit.
+    private static func wordPattern(_ find: String) -> NSRegularExpression? {
+        let word = find.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !word.isEmpty else { return nil }
+        let pattern = "(?<![\\p{L}\\p{N}])" + NSRegularExpression.escapedPattern(for: word) + "(?![\\p{L}\\p{N}])"
+        return try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+    }
+}

@@ -23,8 +23,8 @@ struct EditorView: View {
         return content(vm: vm)
             .toolbar { toolbarContent(vm: vm) }
             .sheet(isPresented: Binding(
-                get: { vm.isExporting || vm.exportError != nil },
-                set: { if !$0 { vm.exportError = nil } }
+                get: { vm.isExporting || vm.exportError != nil || vm.exportedURL != nil },
+                set: { if !$0 { vm.exportError = nil; vm.exportedURL = nil } }
             )) {
                 ExportSheet(viewModel: vm)
             }
@@ -53,17 +53,29 @@ struct EditorView: View {
                     AVPlayerViewRepresentable(player: vm.player)
                         .frame(minHeight: 320)
 
+                    // A click on the preview plays or pauses. AVPlayerView's
+                    // own controls are off: their scrubber didn't know
+                    // about the trim and played the parts cut off it, next
+                    // to the timeline doing the same job properly.
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            guard !vm.isLoading, vm.loadError == nil else { return }
+                            vm.togglePlayPause()
+                        }
+                        .accessibilityLabel(vm.isPlaying ? "Pause" : "Play")
+                        .accessibilityAddTraits(.isButton)
+
                     // Click-to-place overlay for zoom focus points.
                     // Only enters the hit path when a keyframe is
-                    // actively being retargeted — otherwise the
-                    // AVPlayerView controls work normally.
+                    // actively being retargeted — otherwise a click
+                    // plays or pauses.
                     if vm.zoomTargetBeingPlaced != nil {
                         zoomFocusPlacementOverlay(vm: vm)
                     } else if vm.webcamPosition != .hidden {
                         // Drag-to-reposition the inset webcam. Scoped
-                        // to the webcam's on-screen rect so AVPlayerView
-                        // controls (play/pause bar, scrubber) still
-                        // receive clicks everywhere else.
+                        // to the webcam's on-screen rect so a click
+                        // anywhere else still plays or pauses.
                         webcamDragOverlay(vm: vm)
                     }
 
@@ -75,20 +87,10 @@ struct EditorView: View {
                             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
                     }
                     if let err = vm.loadError {
-                        VStack(spacing: 12) {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .font(.system(size: 40))
-                                .foregroundStyle(.orange)
-                            Text("Couldn't load this recording")
-                                .font(.headline)
-                            Text(err.localizedDescription)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.center)
-                                .frame(maxWidth: 400)
-                        }
-                        .padding(24)
-                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                        FriendlyErrorView(error: .opening(err))
+                            .frame(maxWidth: 400)
+                            .padding(24)
+                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
                     }
                 }
 
@@ -111,7 +113,7 @@ struct EditorView: View {
         // Pro-editor navigation: space toggles play (already wired via
         // the button's keyboardShortcut), J/K/L = jump-back / pause /
         // jump-forward, arrows step one frame, shift-arrows step one
-        // second. Using `.onKeyPress` so these fire whenever the window
+        // second, Home / End jump to the trim's ends. Using `.onKeyPress` so these fire whenever the window
         // has key focus without needing hidden buttons per mapping.
         //
         // IMPORTANT: SwiftUI's `.onKeyPress` on a parent fires even when
@@ -176,14 +178,28 @@ struct EditorView: View {
                 vm.clearSelection()
                 return .handled
             }
-            // ⌫ — when a selection is active, cut it. Skip if text
-            // field is focused so delete-a-character still works.
+            // ⌫ — when a selection is active, cut it; otherwise delete
+            // the zoom open in the Smart zoom row (picked on the
+            // timeline). Only while that row shows it, so a zoom picked
+            // long ago can't vanish unseen. Skip if text field is
+            // focused so delete-a-character still works.
             if press.key == .delete || press.key == .deleteForward {
                 if isTextInputFocused() { return .ignored }
                 if vm.selectionRange != nil {
                     vm.cutSelection()
                     return .handled
                 }
+                if vm.openInspectorFeature == .zoom, let id = vm.selectedZoomID {
+                    vm.removeZoomKeyframe(id: id)
+                    return .handled
+                }
+            }
+            // Home / End (fn-← / fn-→ on a laptop) — the start and end
+            // of what's kept, not of the raw recording.
+            if press.key == .home || press.key == .end {
+                if isTextInputFocused() { return .ignored }
+                vm.seek(to: press.key == .home ? vm.trimStart : vm.trimEnd)
+                return .handled
             }
             return .ignored
         }
@@ -217,16 +233,11 @@ struct EditorView: View {
     }
 
     /// Total vertical space the timeline needs for its currently-
-    /// visible lanes. Base = header (~18) + padding (20) + main track
-    /// (40) + controls (~30) + spacing. Each visible secondary lane
-    /// adds its own height + 6pt inter-row spacing.
+    /// visible lanes: header (~18) + padding (20) + the lanes (track,
+    /// each visible lane, a scroll bar when zoomed; see
+    /// `TimelineView.lanesHeight`) + controls (~30) + spacing.
     private func timelineHeight(vm: EditorViewModel) -> CGFloat {
-        var h: CGFloat = 18 + 20 + 40 + 30 + 12
-        for lane in TimelineLane.allCases where vm.isTimelineLaneVisible(lane) {
-            let rowH: CGFloat = (lane == .zoom) ? 18 : 14
-            h += rowH + 6
-        }
-        return h
+        18 + 20 + TimelineView.lanesHeight(vm) + 30 + 12
     }
 
     // MARK: - Toolbar
@@ -359,8 +370,7 @@ struct EditorView: View {
 
     /// Webcam drag-to-reposition. The hit-testable catcher is scoped
     /// tightly to the webcam's current display rect so clicks
-    /// elsewhere (AVPlayerView's play/pause/timeline controls) still
-    /// route through. The rect is safe to pin to the "committed"
+    /// elsewhere still reach the play/pause catcher underneath. The rect is safe to pin to the "committed"
     /// position because we don't update `vm.webcamCustomOrigin` until
     /// the drag ends — the webcam doesn't visually move mid-drag, so
     /// neither does the hit area.
@@ -397,7 +407,7 @@ struct EditorView: View {
             ZStack(alignment: .topLeading) {
                 // Hit-testable catcher, tightly scoped to the webcam's
                 // current on-screen rect. Everywhere else in the
-                // preview falls through to AVPlayerView's controls.
+                // preview falls through to play/pause.
                 Color.black.opacity(0.001)
                     .contentShape(Rectangle())
                     .frame(width: baseRect.width, height: baseRect.height)
@@ -507,9 +517,10 @@ struct EditorView: View {
         func makeNSView(context: Context) -> AVPlayerView {
             let view = AVPlayerView()
             view.player = player
-            view.controlsStyle = .inline
+            // No controls: the timeline is the transport, and full
+            // screen is its button (`FullScreenPreview`).
+            view.controlsStyle = .none
             view.videoGravity = .resizeAspect
-            view.showsFullScreenToggleButton = true
             return view
         }
 

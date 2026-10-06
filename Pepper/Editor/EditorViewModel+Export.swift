@@ -86,6 +86,8 @@ extension EditorViewModel {
         isExporting = true
         exportProgress = 0
         exportError = nil
+        exportedURL = nil
+        exportStartedAt = Date()
 
         exportTask = Task { [weak self] in
             do {
@@ -104,7 +106,9 @@ extension EditorViewModel {
                     guard let self else { return }
                     self.isExporting = false
                     self.exportProgress = 1.0
-                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                    // The sheet says where it went, with Show in Finder.
+                    // Finder used to jump to the front instead.
+                    self.exportedURL = url
                     self.applyLayout()
                 }
             } catch is CancellationError {
@@ -125,7 +129,7 @@ extension EditorViewModel {
 
     /// Export and Send to Orbis can start (the toolbar buttons' rule).
     var canStartExport: Bool {
-        !isExporting && !isLoading && loadError == nil && !(activeOrbisExport?.isActive ?? false)
+        !isExporting && exportedURL == nil && !isLoading && loadError == nil && !(activeOrbisExport?.isActive ?? false)
     }
 
     /// Local export or Orbis render/upload currently running.

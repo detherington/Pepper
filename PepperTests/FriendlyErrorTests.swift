@@ -38,3 +38,18 @@ struct FriendlyErrorTests {
         #expect(FriendlyError(FinalRenderer.RenderError.cancelled).title == "Export cancelled")
     }
 }
+
+extension FriendlyErrorTests {
+    @Test func captionFailuresReadPlainly() {
+        #expect(FriendlyError(CaptionTranscriber.TranscriberError.noSpeechDetected).title == "Pepper didn't hear any speech")
+        let failed = FriendlyError(CaptionTranscriber.TranscriberError.recognizerFailed("SFSpeechErrorDomain 1101"))
+        #expect(failed.title == "Pepper couldn't write captions")
+        #expect(failed.details.contains("1101"))
+    }
+
+    @Test func aRecordingThatWontOpenSaysSo() {
+        let error = FriendlyError.opening(EditorComposition.Error.missingScreenTrack)
+        #expect(error.title == "Pepper couldn't open this recording")
+        #expect(error.details.contains("screen.mov"))
+    }
+}

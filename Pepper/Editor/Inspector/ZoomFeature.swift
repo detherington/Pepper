@@ -46,7 +46,7 @@ struct ZoomFeature: View {
             SelectedZoomEditor(vm: vm, kf: kf)
         }
 
-        Note("Zooms show in purple on the timeline. Drag one to move it, drag its right edge to make it longer, or click it to change just that one.")
+        Note("Zooms show in purple on the timeline. Drag one to move it, drag its right edge to make it longer, or click it to change just that one (Delete removes it).")
 
         PlayheadGatedButton(
             title: "Add a zoom at the playhead",

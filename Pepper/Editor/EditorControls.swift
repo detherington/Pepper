@@ -54,6 +54,15 @@ enum TimelineMath {
         return String(format: "%02d:%02d.%d", m, s, tenths)
     }
 
+    /// The time at `x` across a track `width` wide (clamped to it).
+    static func time(atX x: CGFloat, duration: CMTime, width: CGFloat) -> CMTime {
+        guard width > 0 else { return .zero }
+        let fraction = Double(max(0, min(width, x)) / width)
+        let total = CMTimeGetSeconds(duration)
+        guard total.isFinite else { return .zero }
+        return CMTime(seconds: fraction * total, preferredTimescale: 600)
+    }
+
     static func x(for time: CMTime, duration: CMTime, width: CGFloat) -> CGFloat {
         let total = CMTimeGetSeconds(duration)
         guard total > 0, time.isValid, !time.isIndefinite else { return 0 }

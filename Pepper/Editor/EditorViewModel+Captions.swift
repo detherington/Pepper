@@ -144,5 +144,31 @@ extension EditorViewModel {
         }
     }
 
+    /// Captions › Fix a word everywhere: every whole-word `find` becomes
+    /// `replacement`, as one undo step. Returns how many changed.
+    @discardableResult
+    func replaceWordInCaptions(_ find: String, with replacement: String) -> Int {
+        guard var log = transcription else { return 0 }
+        let (lines, count) = log.replacingWord(find, with: replacement)
+        guard count > 0 else { return 0 }
+        let old = log.lines
+        log.lines = lines
+        transcription = log
+        persistTranscription()
+        applyLayout()
+        registerUndoableSnapshot(
+            "Replace in Captions",
+            capture: { vm -> [TranscriptionLine] in vm.transcription?.lines ?? [] },
+            oldState: old
+        ) { vm, state in
+            guard var l = vm.transcription else { return }
+            l.lines = state
+            vm.transcription = l
+            vm.persistTranscription()
+            vm.applyLayout()
+        }
+        return count
+    }
+
     private func persistTranscription() { scheduleSave(.transcription) }
 }

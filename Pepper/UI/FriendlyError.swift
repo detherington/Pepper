@@ -46,6 +46,8 @@ struct FriendlyError: Equatable {
                                  details: details)
         case let orbis as OrbisError:
             return describe(orbis, details: details)
+        case let captions as CaptionTranscriber.TranscriberError:
+            return describe(captions, details: details)
         case is URLError:
             return network(details)
         default:
@@ -77,6 +79,34 @@ struct FriendlyError: Equatable {
         }
     }
 
+    private static func describe(_ error: CaptionTranscriber.TranscriberError, details: String) -> FriendlyError {
+        switch error {
+        case .unavailable:
+            return FriendlyError(title: "This Mac can't write captions",
+                                 advice: "macOS's on-device speech recognition isn't available here.",
+                                 details: details)
+        case .noSpeechDetected:
+            return FriendlyError(title: "Pepper didn't hear any speech",
+                                 advice: "If you did talk, check the waveform on the timeline: the microphone may have been muted or too quiet.",
+                                 details: details)
+        case .assetUnavailable:
+            return FriendlyError(title: "Pepper couldn't get the speech model",
+                                 advice: "Captions use macOS's speech model for your language, downloaded the first time. Check your internet connection, then try again.",
+                                 details: details)
+        case .recognizerFailed:
+            return FriendlyError(title: "Pepper couldn't write captions", advice: "Try again. \(passItOn)", details: details)
+        }
+    }
+
+    /// A recording the editor (or Send to Orbis) couldn't open. Whatever
+    /// the cause, it's the recording's files, so say that rather than a
+    /// generic "something went wrong".
+    static func opening(_ error: Error) -> FriendlyError {
+        FriendlyError(title: "Pepper couldn't open this recording",
+                      advice: "Some of its files may be missing or damaged. Close it and open it again. \(passItOn)",
+                      details: FriendlyError(error).details)
+    }
+
     private static func network(_ details: String) -> FriendlyError {
         FriendlyError(title: "Pepper couldn't reach Orbis",
                       advice: "Check your internet connection, then try again.",
@@ -99,19 +129,21 @@ struct FriendlyError: Equatable {
 }
 
 /// A failure in a sheet: what happened, what to do, and Copy Details.
+/// `compact` sizes it for an inspector row.
 struct FriendlyErrorView: View {
     let error: FriendlyError
+    var compact = false
     @State private var copied = false
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: compact ? 8 : 12) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.title)
+                .font(compact ? .system(size: 13) : .title)
                 .foregroundStyle(.orange)
-            VStack(alignment: .leading, spacing: 6) {
-                Text(error.title).font(.headline)
+            VStack(alignment: .leading, spacing: compact ? 3 : 6) {
+                Text(error.title).font(compact ? .system(size: 12.5, weight: .semibold) : .headline)
                 Text(error.advice)
-                    .font(.callout)
+                    .font(compact ? .system(size: 11.5) : .callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Button(copied ? "Details Copied" : "Copy Details") {

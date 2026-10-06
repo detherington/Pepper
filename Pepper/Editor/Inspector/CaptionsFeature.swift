@@ -62,6 +62,8 @@ struct CaptionsFeature: View {
 
             CaptionEditList(vm: vm, lines: log.lines)
 
+            CaptionReplaceBox(vm: vm, log: log)
+
             Toggle("Also save a subtitle file", isOn: $vm.exportSRTSidecar)
                 .toggleStyle(.checkbox)
                 .font(.system(size: 12.5))
@@ -86,10 +88,58 @@ struct CaptionsFeature: View {
         }
 
         if let error = vm.transcriptionError {
-            Text(error.localizedDescription)
-                .font(.system(size: 11.5))
-                .foregroundStyle(.orange)
-                .fixedSize(horizontal: false, vertical: true)
+            FriendlyErrorView(error: FriendlyError(error), compact: true)
         }
+    }
+}
+
+/// Fix a word everywhere: the speech engine tends to mishear the same
+/// name in every line ("Orbus" for Orbis), and fixing it line by line
+/// in the edit list was the only way. Whole words only, any case (see
+/// `TranscriptionLog.replacingWord`), one undo step.
+private struct CaptionReplaceBox: View {
+    let vm: EditorViewModel
+    let log: TranscriptionLog
+    @State private var find = ""
+    @State private var replacement = ""
+    @State private var replaced: Int?
+
+    var body: some View {
+        let found = log.occurrences(ofWord: find)
+        let target = replacement.trimmingCharacters(in: .whitespaces)
+        VStack(alignment: .leading, spacing: 6) {
+            FieldLabel("Fix a word everywhere")
+            HStack(spacing: 6) {
+                TextField("Find", text: $find)
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                TextField("Replace with", text: $replacement)
+            }
+            .textFieldStyle(.roundedBorder)
+            .controlSize(.small)
+            HStack {
+                Text(status(found: found))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Replace all") {
+                    replaced = vm.replaceWordInCaptions(find, with: target)
+                    find = ""
+                    replacement = ""
+                }
+                .controlSize(.small)
+                .disabled(found == 0 || target.isEmpty || target == find.trimmingCharacters(in: .whitespaces))
+            }
+        }
+        .onChange(of: find) { _, new in if !new.isEmpty { replaced = nil } }
+    }
+
+    private func status(found: Int) -> String {
+        if find.trimmingCharacters(in: .whitespaces).isEmpty {
+            if let replaced { return "Replaced \(replaced) time\(replaced == 1 ? "" : "s")." }
+            return "For a name the captions got wrong."
+        }
+        return found == 0 ? "Not in the captions" : "Found \(found) time\(found == 1 ? "" : "s")"
     }
 }

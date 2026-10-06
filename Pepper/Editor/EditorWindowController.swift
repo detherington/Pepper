@@ -80,6 +80,11 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     // the Orbis sheet, so the command is handed to it.
     @objc func exportVideo(_ sender: Any?) { viewModel.pendingMenuCommand = .export }
     @objc func sendToOrbis(_ sender: Any?) { viewModel.pendingMenuCommand = .sendToOrbis }
+
+    // View menu: the timeline's zoom.
+    @objc func zoomTimelineIn(_ sender: Any?)  { viewModel.zoomTimelineIn() }
+    @objc func zoomTimelineOut(_ sender: Any?) { viewModel.zoomTimelineOut() }
+    @objc func fitTimeline(_ sender: Any?)     { viewModel.fitTimeline() }
 }
 
 extension EditorWindowController: NSMenuItemValidation {
@@ -98,6 +103,10 @@ extension EditorWindowController: NSMenuItemValidation {
         case #selector(sendToOrbis(_:)):
             // The toolbar only shows Send to Orbis when signed in.
             return viewModel.canStartExport && OrbisAccount.shared.isConnected
+        case #selector(zoomTimelineIn(_:)):
+            return !viewModel.isLoading && viewModel.timelineZoom < viewModel.maxTimelineZoom
+        case #selector(zoomTimelineOut(_:)), #selector(fitTimeline(_:)):
+            return !viewModel.isLoading && viewModel.timelineZoom > 1
         default:
             return true
         }
