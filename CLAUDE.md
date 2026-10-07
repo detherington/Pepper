@@ -26,7 +26,7 @@ Requires macOS 26 (everyone at SBS is on 26 or later); Sparkle only
 offers updates to Macs that meet the minimum.
 
 Single-maintainer project; ship cadence is "whenever a feature's ready."
-Version is `MARKETING_VERSION` in `project.yml` — currently 1.4.0. The
+Version is `MARKETING_VERSION` in `project.yml` — currently 1.4.1. The
 build number (`CURRENT_PROJECT_VERSION`) is a UTC `YYYYMMDDHHMM`
 timestamp set by the release script.
 
@@ -58,7 +58,7 @@ only happens during `scripts/release.sh`.
 `PepperTests` (Swift Testing, hosted in Pepper.app, which skips its own
 startup when XCTest launches it) covers the pure logic: trim rounding,
 pause cutting around clicks, `FriendlyError` wording, recording names and
-renames, captions' Replace all, Export's time-left wording. Add a test with any change there; `scripts/release.sh` runs them
+renames, captions' Replace all, Export's time-left wording, title cards' brand fonts. Add a test with any change there; `scripts/release.sh` runs them
 before building. Capture, compositing and UI are still checked by hand
 and with the review hooks below ("smoke-test a recording, confirm the
 export renders and the editor opens it").
@@ -155,7 +155,8 @@ to its composition's `State` on inspector changes; the compositor reads
 per frame.
 
 Per-frame order: screen → cursor ripples → smart zoom → webcam (with
-fade + talking-head interpolation) → title cards → captions → keystroke overlays.
+fade + talking-head interpolation) → captions → keystroke overlays → title
+cards (last, so a card covers the captions as it covers the recording).
 
 **Watch out:** an editor-initiated export reads the editor's own
 `State`, so `applyLayout` bails while `isExporting` is true. Separately,
@@ -188,7 +189,7 @@ by drawing its lanes wider in a sideways scroll view, so lane code just gets a b
 the controls drop their names for icons when the bar is narrow) with `Inspector/` (`EditorInspector`: plain-language feature rows with switches, one open at a time via `vm.openInspectorFeature`, plus Quick polish; timeline/preview clicks open the matching row), `Timeline/`, `ExportSheet` (+ the save panel's Quality accessory) |
 | `Pepper/Rendering/` | `FinalRenderer` (reader → compositor → writer), `ExportQuality`, `SRTFormatter` |
 | `Pepper/Orbis/` | "Export to Orbis": `OrbisAccount` (connection owner — OAuth 2.1 PKCE + loopback sign-in as client `pepper-mac`, scope `videos`, same flow as Muesli; refresh/revoke), `OAuthLoopbackServer`, `OrbisClient` (REST; asks `OrbisAccount` for a credential per request), `OrbisExportController` (FinalRenderer → presigned R2 PUT → ingest-assets), `OrbisExportSheet`, `OrbisSendWindowController` (Send to Orbis from the main window's right-click menu: loads the recording headless with its saved edits and shows the same form in its own window; its uploads count for quit), `OrbisKeychain` (refresh token keyed per host, never UserDefaults), `OrbisSettings` (host + last-used form values). No custom URL scheme — an old token-delivery link was a token-injection hole |
-| `Pepper/UI/` | `Home/` (main window: `HomeWindowController` — hides while a recording starts, back if it's cancelled — `HomeModel`, `HomeView`, in the setup/sign-in page look; Teleprompter and Soundboard buttons; a recent recording's right-click menu opens, reveals, renames or trashes it, never while it's rendering or exporting); `FriendlyError` (+ `FriendlyErrorView`); SwiftUI/AppKit windows (Settings, Soundboard, SourcePicker, RegionSelector, Countdown, RecordingBorder, WebcamPreview, Teleprompter, VideoReadyNotice — Pepper's own card, not a system notification, so no permission prompt); `Onboarding/` (setup walkthrough, modelled on Muesli's); `Brand` (SBS tokens shared with Muesli: colorsets, cobalt `AccentColor` app-wide, Nantes font in `Resources/Fonts`, Neon/Quiet button styles, `brandCard`/`brandKicker`/`brandTimecode`). The editor follows Muesli's rules: native toolbar/forms/menus/sheets; ground strips (timeline, inspector) carrying surface cards; one Neon CTA (Quick polish); Persimmon = live/playhead, Violet = automatic (zooms), Emerald = you (full-screen moments), Teal = caption blocks. Recording indicators (the border, the menu-bar record icon) stay system red on purpose: red is universally "recording" |
+| `Pepper/UI/` | `Home/` (main window: `HomeWindowController` — hides while a recording starts, back if it's cancelled — `HomeModel`, `HomeView`, in the setup/sign-in page look; Teleprompter and Soundboard buttons; a recent recording's right-click menu opens, reveals, renames or trashes it, never while it's rendering or exporting); `FriendlyError` (+ `FriendlyErrorView`); SwiftUI/AppKit windows (Settings, Soundboard, SourcePicker, RegionSelector, Countdown, RecordingBorder, WebcamPreview, Teleprompter, VideoReadyNotice — Pepper's own card, not a system notification, so no permission prompt); `Onboarding/` (setup walkthrough, modelled on Muesli's); `Brand` (SBS tokens shared with Muesli: colorsets, cobalt `AccentColor` app-wide, Nantes font in `Resources/Fonts` (Maison Neue Extended isn't bundled: only its web files exist, so SF Pro Expanded stands in; title cards default to these brand faces, `TitleCardFont.sbs`), Neon/Quiet button styles, `brandCard`/`brandKicker`/`brandTimecode`). The editor follows Muesli's rules: native toolbar/forms/menus/sheets; ground strips (timeline, inspector) carrying surface cards; one Neon CTA (Quick polish); Persimmon = live/playhead, Violet = automatic (zooms), Emerald = you (full-screen moments), Teal = caption blocks. Recording indicators (the border, the menu-bar record icon) stay system red on purpose: red is universally "recording" |
 | `Pepper/Hotkeys/` | `GlobalHotkey` — Carbon `RegisterEventHotKey` wrapper |
 | `Pepper/Settings/` | `Settings` — UserDefaults-backed singleton, posts `Settings.didChange` notification |
 

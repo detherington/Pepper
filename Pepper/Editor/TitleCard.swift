@@ -19,7 +19,9 @@ struct TitleCard: Equatable, Codable, Sendable {
     /// Font family name for the title + subtitle. Nil = macOS system
     /// font (SF Pro Display). Picking a family here replaces the
     /// typeface wholesale; weight logic (bold title / regular
-    /// subtitle) is preserved via `NSFontManager`.
+    /// subtitle) is preserved via `NSFontManager`. The brand's choices
+    /// (`TitleCardFont.sbs` and co.) are names of their own, resolved
+    /// by `TitleCardFont`; new cards start on `sbs`.
     var fontName: String?
     /// Filename (not a full path) of a user-chosen background image
     /// living under `TitleCardAssets.directory`. When non-nil and
@@ -34,7 +36,7 @@ struct TitleCard: Equatable, Codable, Sendable {
         textColor: .white,
         backgroundColor: ColorRGBA(red: 0.07, green: 0.07, blue: 0.10, alpha: 1.0),
         fadeDuration: 2.0,
-        fontName: nil,
+        fontName: TitleCardFont.sbs,
         backgroundImageFilename: nil
     )
 
@@ -45,7 +47,7 @@ struct TitleCard: Equatable, Codable, Sendable {
         textColor: .white,
         backgroundColor: ColorRGBA(red: 0.07, green: 0.07, blue: 0.10, alpha: 1.0),
         fadeDuration: 2.0,
-        fontName: nil,
+        fontName: TitleCardFont.sbs,
         backgroundImageFilename: nil
     )
 
@@ -112,7 +114,27 @@ struct TitleCard: Equatable, Codable, Sendable {
 /// macOS. Stored as family names so the renderer can ask
 /// NSFontManager for bold/regular variants at draw time. `name == nil`
 /// represents the OS-default system font (SF Pro Display).
+///
+/// The SBS brand's faces come first (`brandOptions`), as `Brand` sets
+/// them in the app itself: Maison Neue Extended Demi for headlines
+/// (SF Pro Expanded until a desktop copy is installed or bundled; only
+/// its web files exist) and Nantes Light, which Pepper bundles.
 enum TitleCardFont {
+    /// The brand's pairing: the title in the headline face, the second
+    /// line in Nantes Light. New cards' default.
+    static let sbs = "SBS"
+    /// Both lines in the headline face.
+    static let sbsHeadline = "SBS Headline"
+    /// Both lines in Nantes Light. Also the family name the font panel
+    /// gives Nantes, so picking it there lands here too.
+    static let nantes = "Nantes"
+
+    /// Brand cards set the title in capitals with −2% tracking, as the
+    /// brand's headlines are (`brandDisplay`).
+    static func isBrand(_ name: String?) -> Bool {
+        name == sbs || name == sbsHeadline || name == nantes
+    }
+
     struct Option: Identifiable, Hashable {
         /// Nil → use the built-in `NSFont.systemFont(ofSize:weight:)`
         /// which tracks whichever system typeface the running macOS
@@ -123,6 +145,13 @@ enum TitleCardFont {
         let label: String
         var id: String { familyName ?? "<system>" }
     }
+
+    /// The brand's faces, above the rest in the font menu.
+    static let brandOptions: [Option] = [
+        Option(familyName: sbs,         label: "SBS Brand"),
+        Option(familyName: sbsHeadline, label: "SBS Headline"),
+        Option(familyName: nantes,      label: "Nantes"),
+    ]
 
     /// Options are ordered by how commonly they're used on title
     /// cards — system first, then sans, then serif, then mono.
@@ -147,6 +176,11 @@ enum TitleCardFont {
     /// ships settings between Macs that have different font sets.
     static func titleFont(name: String?, size: CGFloat) -> NSFont {
         guard let name else { return .systemFont(ofSize: size, weight: .bold) }
+        switch name {
+        case sbs, sbsHeadline: return headlineFont(size: size, weight: .semibold)
+        case nantes:           return nantesFont(size: size)
+        default:               break
+        }
         // New York is a system design variant — not a normal family
         // lookup. Resolve via NSFontDescriptor's `.withDesign(.serif)`.
         if name == "New York" {
@@ -173,6 +207,11 @@ enum TitleCardFont {
     /// regular so the title has visual priority.
     static func subtitleFont(name: String?, size: CGFloat) -> NSFont {
         guard let name else { return .systemFont(ofSize: size, weight: .regular) }
+        switch name {
+        case sbs, nantes: return nantesFont(size: size)
+        case sbsHeadline: return headlineFont(size: size, weight: .regular)
+        default:          break
+        }
         if name == "New York" {
             let base = NSFont.systemFont(ofSize: size, weight: .regular)
             if let serifDescriptor = base.fontDescriptor.withDesign(.serif),
@@ -190,6 +229,27 @@ enum TitleCardFont {
             return regular
         }
         return .systemFont(ofSize: size, weight: .regular)
+    }
+
+    /// The brand's headline face, as `Brand.display` picks it: Maison
+    /// Neue Extended Demi (its only weight) when a desktop copy is
+    /// installed, else SF Pro Expanded at `weight`.
+    static func headlineFont(size: CGFloat, weight: NSFont.Weight) -> NSFont {
+        NSFont(name: "MaisonNeueExtended-Demi", size: size)
+            ?? .systemFont(ofSize: size, weight: weight, width: .expanded)
+    }
+
+    /// Nantes Light, bundled; New York Light if it fails to load, as
+    /// `Brand.serif` does. Light is the only weight, so a Nantes title
+    /// isn't bold.
+    static func nantesFont(size: CGFloat) -> NSFont {
+        if let nantes = NSFont(name: "Nantes-Light", size: size) { return nantes }
+        let base = NSFont.systemFont(ofSize: size, weight: .light)
+        if let serif = base.fontDescriptor.withDesign(.serif),
+           let font = NSFont(descriptor: serif, size: size) {
+            return font
+        }
+        return base
     }
 }
 
@@ -354,10 +414,12 @@ enum TitleCardRenderer {
         let subtitleSize = max(20, size.height * 0.04)
         let lineSpacing: CGFloat = size.height * 0.02
 
+        let brand = TitleCardFont.isBrand(card.fontName)
         let title = makeAttributedString(
-            text: card.title,
+            text: brand ? card.title.uppercased() : card.title,
             font: TitleCardFont.titleFont(name: card.fontName, size: titleSize),
-            color: card.textColor.cgColor
+            color: card.textColor.cgColor,
+            kern: brand ? -0.02 * titleSize : 0
         )
         let subtitle = card.subtitle.isEmpty ? nil : makeAttributedString(
             text: card.subtitle,
@@ -406,7 +468,8 @@ enum TitleCardRenderer {
     private static func makeAttributedString(
         text: String,
         font: NSFont,
-        color: CGColor
+        color: CGColor,
+        kern: CGFloat = 0
     ) -> NSAttributedString {
         let style = NSMutableParagraphStyle()
         style.alignment = .center
@@ -414,7 +477,8 @@ enum TitleCardRenderer {
         return NSAttributedString(string: text, attributes: [
             .font: font,
             .foregroundColor: color,
-            .paragraphStyle: style
+            .paragraphStyle: style,
+            .kern: kern
         ])
     }
 

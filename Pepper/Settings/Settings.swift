@@ -108,6 +108,7 @@ final class Settings {
         // recording opens with the same cards + fades + toggles.
         static let editorStartCard        = "editorStartCard"
         static let editorEndCard          = "editorEndCard"
+        static let titleCardsOnBrandFont  = "titleCardsOnBrandFont"
         static let editorWebcamTransitions = "editorWebcamTransitions"
         static let editorSmartZoomEnabled = "editorSmartZoomEnabled"
         static let editorCursorRipplesEnabled = "editorCursorRipplesEnabled"
@@ -185,6 +186,22 @@ final class Settings {
             // DaVinci. Default on; togglable per session.
             Key.exportSRTSidecar: true
         ])
+        moveTitleCardsToBrandFontOnce()
+    }
+
+    /// The SBS brand fonts became the title cards' default. A saved
+    /// last-used card with no font was on the old default (System)
+    /// rather than a choice, so it moves to the brand once; one set to
+    /// System after this stays. Cards saved with a recording keep their
+    /// font, so a video exported again looks as it did.
+    private func moveTitleCardsToBrandFontOnce() {
+        guard !defaults.bool(forKey: Key.titleCardsOnBrandFont) else { return }
+        defaults.set(true, forKey: Key.titleCardsOnBrandFont)
+        for key in [Key.editorStartCard, Key.editorEndCard] {
+            guard var card: TitleCard = readJSON(key), card.fontName == nil else { continue }
+            card.fontName = TitleCardFont.sbs
+            writeJSON(card, forKey: key)
+        }
     }
 
     var webcamPosition: WebcamPosition {

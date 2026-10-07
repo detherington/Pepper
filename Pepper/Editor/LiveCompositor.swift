@@ -289,9 +289,13 @@ final class LiveCompositor: NSObject, AVVideoCompositing {
             }
         }
 
-        composite = applyTitleCards(over: composite, layout: layout, time: frameTime, outputSize: outputSize)
+        // Title cards go on last, over the captions and keystrokes: a
+        // card covers everything the way it covers the recording, and as
+        // it fades they show through with the rest. Drawn above the card,
+        // a line of narration sat on top of the opening title.
         composite = applyCaptions(over: composite, layout: layout, time: frameTime, outputSize: outputSize)
         composite = applyKeystrokeOverlay(over: composite, layout: layout, time: frameTime, outputSize: outputSize)
+        composite = applyTitleCards(over: composite, layout: layout, time: frameTime, outputSize: outputSize)
 
         let cropped = composite.cropped(to: CGRect(origin: .zero, size: outputSize))
         ciContext.render(

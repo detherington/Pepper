@@ -90,15 +90,15 @@ struct TitleCardsFeature: View {
                     Text("Font")
                     Spacer()
                     Menu {
-                        ForEach(TitleCardFont.options) { option in
-                            Button {
-                                card.wrappedValue.fontName = option.familyName
-                            } label: {
-                                if card.wrappedValue.fontName == option.familyName {
-                                    Label(option.label, systemImage: "checkmark")
-                                } else {
-                                    Text(option.label)
-                                }
+                        // The brand's faces first, then the rest.
+                        Section("Brand") {
+                            ForEach(TitleCardFont.brandOptions) { option in
+                                fontMenuItem(option, card: card)
+                            }
+                        }
+                        Section {
+                            ForEach(TitleCardFont.options) { option in
+                                fontMenuItem(option, card: card)
                             }
                         }
                         Divider()
@@ -204,10 +204,22 @@ struct TitleCardsFeature: View {
     /// falls back to the raw family name (which is what `NSFontPanel`
     /// will have fed us). `nil` → "System".
     private func cardFontMenuLabel(for fontName: String?) -> String {
-        if let match = TitleCardFont.options.first(where: { $0.familyName == fontName }) {
+        if let match = (TitleCardFont.brandOptions + TitleCardFont.options).first(where: { $0.familyName == fontName }) {
             return match.label
         }
         return fontName ?? "System"
+    }
+
+    private func fontMenuItem(_ option: TitleCardFont.Option, card: Binding<TitleCard>) -> some View {
+        Button {
+            card.wrappedValue.fontName = option.familyName
+        } label: {
+            if card.wrappedValue.fontName == option.familyName {
+                Label(option.label, systemImage: "checkmark")
+            } else {
+                Text(option.label)
+            }
+        }
     }
 
     /// Open an NSOpenPanel for image selection, copy into the assets
